@@ -298,8 +298,15 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
           )}
         </div>
 
-        {/* The reactive orb: idle and slow at rest, alive during a call. */}
-        <div className="flex flex-1 items-center justify-center py-6">
+        {/* The reactive orb: idle and slow at rest, alive during a call. It
+            collapses to a bottom glow bar once the camera is on, so it never
+            sits on top of the thing the user is trying to show. */}
+        <div
+          className={`flex flex-1 items-center justify-center py-6 transition-opacity duration-500 ${
+            cameraOn ? 'pointer-events-none opacity-0' : 'opacity-100'
+          }`}
+          aria-hidden={cameraOn}
+        >
           <div
             className="relative flex h-48 w-48 items-center justify-center sm:h-56 sm:w-56"
             style={{ '--orb-speed': orbSpeed } as CSSProperties}
@@ -346,8 +353,26 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
           </div>
         </div>
 
-        {/* Bottom stack: caption-style transcript, then the control bar. */}
+        {/* Bottom stack: glow bar (camera mode), transcript, then controls. */}
         <div className="flex w-full flex-col items-center gap-5">
+          {/* With the camera on, the orb becomes an ambient strip of light so the
+              companion still feels present without covering the view. */}
+          {live && cameraOn && (
+            <div
+              className="flex h-8 w-full max-w-md items-end justify-center"
+              style={{ '--orb-speed': orbSpeed } as CSSProperties}
+              aria-hidden="true"
+            >
+              <div
+                className="orb-glow h-1.5 w-48 rounded-full blur-[6px]"
+                style={{
+                  background:
+                    'linear-gradient(90deg, transparent 0%, var(--color-ember) 50%, transparent 100%)',
+                }}
+              />
+            </div>
+          )}
+
           {live && (
             <div
               className="w-full max-w-md animate-[caption-fade-in_0.3s_ease-out] rounded-3xl bg-void/40 px-4 py-3 text-left backdrop-blur-md motion-reduce:animate-none"
