@@ -46,3 +46,56 @@ body {
     opacity: 0.8;
   }
 }
+
+/* The reactive orb — layered glow/ring/sheen/core used by the Live call screen.
+   Speed is driven by the --orb-speed custom property set inline per status. */
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(0.92); opacity: 0.85; }
+  50% { transform: scale(1.07); opacity: 1; }
+}
+
+@keyframes orb-ring-expand {
+  0% { transform: scale(0.72); opacity: 0.55; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+
+@keyframes orb-rotate-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes caption-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.orb-glow,
+.orb-core {
+  animation-name: orb-breathe;
+  animation-duration: var(--orb-speed, 8s);
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.orb-ring {
+  animation-name: orb-ring-expand;
+  animation-duration: var(--orb-speed, 8s);
+  animation-timing-function: ease-out;
+  animation-iteration-count: infinite;
+}
+
+.orb-sheen {
+  animation-name: orb-rotate-slow;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb-glow,
+  .orb-ring,
+  .orb-core,
+  .orb-sheen {
+    animation: none !important;
+    opacity: 0.9;
+  }
+}

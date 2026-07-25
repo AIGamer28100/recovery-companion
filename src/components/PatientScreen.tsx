@@ -14,14 +14,14 @@ import BreathingVisualizer from './BreathingVisualizer'
 import VoiceIndicator from './VoiceIndicator'
 import EmergencyResetButton from './EmergencyResetButton'
 import CaregiverAlertButton from './CaregiverAlertButton'
-import LiveConversation from './LiveConversation'
 import EvaluatorDock from './EvaluatorDock'
 
 interface Props {
   uid: string
+  onBackToLive: () => void
 }
 
-export default function PatientScreen({ uid }: Props) {
+export default function PatientScreen({ uid, onBackToLive }: Props) {
   const [mood, setMood] = useState<Mood | null>(null)
   const [script, setScript] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -104,13 +104,22 @@ export default function PatientScreen({ uid }: Props) {
         <div className="flex flex-1 flex-col gap-7">
           <div className="flex items-center justify-between">
             <StatusIndicator active={active} />
-            <button
-              type="button"
-              onClick={() => signOut(auth)}
-              className="min-h-14 px-2 text-xs tracking-wide text-ink-muted transition hover:text-ink"
-            >
-              Sign out
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={onBackToLive}
+                className="min-h-14 px-2 text-xs tracking-wide text-ink-muted transition hover:text-ink"
+              >
+                ← Voice mode
+              </button>
+              <button
+                type="button"
+                onClick={() => signOut(auth)}
+                className="min-h-14 px-2 text-xs tracking-wide text-ink-muted transition hover:text-ink"
+              >
+                Sign out
+              </button>
+            </div>
           </div>
 
           {proactive && (script || loading) && (
@@ -130,7 +139,6 @@ export default function PatientScreen({ uid }: Props) {
 
           {!active && (
             <>
-              {!voiceBlocked && <LiveConversation uid={uid} />}
               <TapMatrix disabled={loading} onSelect={scenarioSelect} />
               <BreathingVisualizer />
               <MoodRow selected={mood} onSelect={handleMoodSelect} />

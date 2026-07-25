@@ -5,6 +5,7 @@ import { getUserProfile } from './lib/profile'
 import type { UserProfile } from './types'
 import Login from './components/Login'
 import RoleOnboarding from './components/RoleOnboarding'
+import LiveApp from './components/LiveApp'
 import PatientScreen from './components/PatientScreen'
 import CaregiverDashboard from './components/CaregiverDashboard'
 
@@ -13,6 +14,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [profileLoading, setProfileLoading] = useState(true)
+  const [showTapFallback, setShowTapFallback] = useState(false)
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -47,5 +49,11 @@ export default function App() {
     return <CaregiverDashboard uid={user.uid} profile={profile} />
   }
 
-  return <PatientScreen uid={user.uid} />
+  // Live voice is the primary experience; the tap-only screen is the fallback
+  // for devices without a mic, or when someone can't speak out loud right now.
+  if (showTapFallback) {
+    return <PatientScreen uid={user.uid} onBackToLive={() => setShowTapFallback(false)} />
+  }
+
+  return <LiveApp uid={user.uid} onOpenFallback={() => setShowTapFallback(true)} />
 }

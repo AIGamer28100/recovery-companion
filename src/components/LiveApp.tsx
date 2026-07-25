@@ -1,0 +1,442 @@
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { startAudioConversation } from 'firebase/ai'
+import type { AudioConversationController, LiveSession } from 'firebase/ai'
+import { createLiveModel, VISION_CHECK_PROMPT } from '../lib/geminiLive'
+import { teeSession } from '../lib/liveTee'
+import { VideoFrameStreamer } from '../lib/videoStream'
+import { logEvent } from '../lib/events'
+
+type Status = 'idle' | 'connecting' | 'live' | 'error'
+
+/** How often the vision coach considers nudging. */
+const COACH_TICK_MS = 4000
+/** Both sides must have been quiet this long before a nudge is allowed. */
+const QUIET_BEFORE_NUDGE_MS = 11000
+/** Hard floor between nudges, so a long silence can't turn into a drip of prompts. */
+const MIN_NUDGE_GAP_MS = 22000
+
+interface TranscriptLine {
+  role: 'you' | 'companion'
+  text: string
+}
+
+interface Props {
+  uid: string
+  onOpenFallback: () => void
+}
+
+/* Presentational icon glyphs — inline SVG, no external assets. */
+function MicIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M19 11a7 7 0 0 1-14 0M12 18v3"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function CameraIcon({ className, off }: { className?: string; off?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <rect x="3" y="6" width="13" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="m16 10.5 5-2.8v8.6l-5-2.8" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      {off && <path d="M3 3l18 18" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />}
+    </svg>
+  )
+}
+
+function EndCallIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function MenuIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <circle cx="5" cy="12" r="1.7" />
+      <circle cx="12" cy="12" r="1.7" />
+      <circle cx="19" cy="12" r="1.7" />
+    </svg>
+  )
+}
+
+export default function LiveApp({ uid, onOpenFallback }: Props) {
+  const [status, setStatus] = useState<Status>('idle')
+  const [cameraOn, setCameraOn] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [lines, setLines] = useState<TranscriptLine[]>([])
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null)
+
+  const sessionRef = useRef<LiveSession | null>(null)
+  const controllerRef = useRef<AudioConversationController | null>(null)
+  const streamerRef = useRef<VideoFrameStreamer | null>(null)
+  const cameraStreamRef = useRef<MediaStream | null>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+
+  const lastActivityRef = useRef<number>(0)
+  const lastNudgeRef = useRef<number>(0)
+  const coachTimerRef = useRef<number | null>(null)
+  const cameraOnRef = useRef(false)
+
+  const stopVisionCoach = useCallback(() => {
+    if (coachTimerRef.current !== null) {
+      window.clearInterval(coachTimerRef.current)
+      coachTimerRef.current = null
+    }
+  }, [])
+
+  /**
+   * Nudges the model to re-check the camera, but only during a genuine lull —
+   * never while either side is mid-sentence. Without the silence gate this
+   * becomes a companion that talks over you every few seconds.
+   */
+  const startVisionCoach = useCallback(() => {
+    stopVisionCoach()
+    coachTimerRef.current = window.setInterval(() => {
+      const session = sessionRef.current
+      if (!session || session.isClosed || !cameraOnRef.current) return
+
+      const now = Date.now()
+      const quietFor = now - lastActivityRef.current
+      const sinceNudge = now - lastNudgeRef.current
+      if (quietFor < QUIET_BEFORE_NUDGE_MS || sinceNudge < MIN_NUDGE_GAP_MS) return
+
+      lastNudgeRef.current = now
+      void session.sendTextRealtime(VISION_CHECK_PROMPT).catch(() => {
+        /* session closing — nothing to do */
+      })
+    }, COACH_TICK_MS)
+  }, [stopVisionCoach])
+
+  const stopCamera = useCallback(() => {
+    streamerRef.current?.stop()
+    streamerRef.current = null
+    cameraStreamRef.current?.getTracks().forEach((t) => t.stop())
+    cameraStreamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
+    cameraOnRef.current = false
+    setCameraOn(false)
+  }, [])
+
+  const endCall = useCallback(async () => {
+    stopVisionCoach()
+    stopCamera()
+    try {
+      await controllerRef.current?.stop()
+      await sessionRef.current?.close()
+    } catch {
+      // already torn down
+    }
+    controllerRef.current = null
+    sessionRef.current = null
+    setStatus('idle')
+  }, [stopCamera, stopVisionCoach])
+
+  // Never leave the mic or camera running if this unmounts.
+  useEffect(() => {
+    return () => {
+      void endCall()
+    }
+  }, [endCall])
+
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ block: 'end' })
+  }, [lines])
+
+  // Transcripts arrive as small fragments ("How a", "re yo", "u today?"), so
+  // consecutive chunks from the same speaker are merged into one line.
+  const appendTranscript = useCallback((role: TranscriptLine['role'], chunk: string) => {
+    setLines((prev) => {
+      const last = prev[prev.length - 1]
+      if (last?.role === role) {
+        return [...prev.slice(0, -1), { role, text: last.text + chunk }]
+      }
+      return [...prev.slice(-40), { role, text: chunk }]
+    })
+  }, [])
+
+  const startCall = async () => {
+    setStatus('connecting')
+    setErrorMsg(null)
+    setLines([])
+    try {
+      const session = await createLiveModel().connect()
+      sessionRef.current = session
+
+      // startAudioConversation claims the session's single receive() consumer,
+      // so tee the stream: audio still flows to playback untouched, and we get
+      // a copy of every message for the live transcript.
+      const teed = teeSession(session, (message) => {
+        if (message.type !== 'serverContent') return
+        if (message.inputTranscription?.text) {
+          lastActivityRef.current = Date.now()
+          appendTranscript('you', message.inputTranscription.text)
+        }
+        if (message.outputTranscription?.text) {
+          lastActivityRef.current = Date.now()
+          appendTranscript('companion', message.outputTranscription.text)
+        }
+      })
+
+      controllerRef.current = await startAudioConversation(teed)
+
+      lastActivityRef.current = Date.now()
+      startVisionCoach()
+
+      setStatus('live')
+      logEvent(uid, { type: 'live_conversation', mood: null })
+    } catch (err) {
+      console.error('Live conversation failed to start', err)
+      setErrorMsg(
+        err instanceof DOMException
+          ? 'Microphone access is blocked. Allow it in your browser and try again.'
+          : "Couldn't open the line. Check your connection and try again.",
+      )
+      setStatus('error')
+      await endCall()
+      setStatus('error')
+    }
+  }
+
+  const toggleCamera = async () => {
+    if (cameraOn) {
+      stopCamera()
+      return
+    }
+    const session = sessionRef.current
+    if (!session) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 1280 } },
+      })
+      cameraStreamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play()
+      }
+      const streamer = new VideoFrameStreamer(session, videoRef.current!)
+      streamer.start()
+      streamerRef.current = streamer
+      cameraOnRef.current = true
+      // Give the model a moment of real video before the first nudge.
+      lastNudgeRef.current = Date.now()
+      setCameraOn(true)
+    } catch (err) {
+      console.error('Camera unavailable', err)
+      setErrorMsg('Camera access is blocked, but the conversation is still going.')
+      stopCamera()
+    }
+  }
+
+  const live = status === 'live'
+  const connecting = status === 'connecting'
+  // Purely presentational: how fast the orb breathes/pulses in each state.
+  const orbSpeed = live ? '2.2s' : connecting ? '3.4s' : '9s'
+  const focusRing =
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-2 focus-visible:ring-offset-void'
+
+  return (
+    <div className="relative flex min-h-[100dvh] flex-col overflow-hidden bg-void text-ink">
+      <div className="ember-field" />
+
+      {/* Camera preview fills the screen when on; mirrored like a selfie view. */}
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        className={`absolute inset-0 h-full w-full scale-x-[-1] object-cover transition-opacity duration-700 ${
+          cameraOn ? 'opacity-60' : 'opacity-0'
+        }`}
+        aria-hidden="true"
+      />
+
+      {/* Scrims keep text and controls legible over a live camera feed. */}
+      {cameraOn && (
+        <>
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-48 bg-gradient-to-b from-void/95 via-void/50 to-transparent"
+            aria-hidden="true"
+          />
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-72 bg-gradient-to-t from-void via-void/70 to-transparent"
+            aria-hidden="true"
+          />
+        </>
+      )}
+
+      <div className="relative z-10 flex flex-1 flex-col items-center px-6 pb-6 pt-12 text-center">
+        {/* Header */}
+        <div className="flex flex-col items-center gap-3">
+          <h1 className="font-display text-2xl font-medium sm:text-3xl">Recovery Companion</h1>
+          <p className="max-w-xs text-sm leading-relaxed text-ink-muted">
+            {status === 'idle' && 'Tap to start talking. No typing, no forms — just talk.'}
+            {connecting && 'Opening the line…'}
+            {live && cameraOn && 'I can see your space — I’ll use what’s around you to ground you.'}
+            {live && !cameraOn && 'I’m listening. Cut in any time.'}
+            {status === 'error' && (errorMsg ?? 'Something went wrong.')}
+          </p>
+          {live && (
+            <span className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.25em] text-ember">
+              <span className="h-1.5 w-1.5 rounded-full bg-ember motion-safe:animate-pulse" aria-hidden="true" />
+              LIVE
+            </span>
+          )}
+        </div>
+
+        {/* The reactive orb: idle and slow at rest, alive during a call. */}
+        <div className="flex flex-1 items-center justify-center py-6">
+          <div
+            className="relative flex h-48 w-48 items-center justify-center sm:h-56 sm:w-56"
+            style={{ '--orb-speed': orbSpeed } as CSSProperties}
+          >
+            <div
+              className="orb-glow absolute -inset-6 rounded-full blur-3xl"
+              style={{
+                background: 'radial-gradient(circle, var(--color-ember) 0%, transparent 70%)',
+                opacity: 0.4,
+              }}
+              aria-hidden="true"
+            />
+            <div
+              className="orb-ring absolute inset-0 rounded-full border border-ember/40"
+              style={{ animationDelay: '0s' }}
+              aria-hidden="true"
+            />
+            <div
+              className="orb-ring absolute inset-0 rounded-full border border-ember/25"
+              style={{ animationDelay: 'calc(var(--orb-speed) / 3)' }}
+              aria-hidden="true"
+            />
+            <div
+              className="orb-ring absolute inset-0 rounded-full border border-ember/15"
+              style={{ animationDelay: 'calc(var(--orb-speed) / 3 * 2)' }}
+              aria-hidden="true"
+            />
+            <div
+              className="orb-sheen absolute h-32 w-32 rounded-full opacity-50 sm:h-36 sm:w-36"
+              style={{
+                background: 'conic-gradient(from 0deg, transparent 0%, var(--color-ember) 20%, transparent 40%)',
+                animationDuration: 'calc(var(--orb-speed) * 3)',
+              }}
+              aria-hidden="true"
+            />
+            <div
+              className="orb-core relative h-32 w-32 rounded-full sm:h-36 sm:w-36"
+              style={{
+                background: 'radial-gradient(circle at 35% 28%, #f3d5a3 0%, var(--color-ember) 55%, #8f5f2a 100%)',
+                boxShadow: '0 0 70px 8px var(--color-ember-soft), inset 0 0 30px rgba(0,0,0,0.25)',
+              }}
+              aria-hidden="true"
+            />
+          </div>
+        </div>
+
+        {/* Bottom stack: caption-style transcript, then the control bar. */}
+        <div className="flex w-full flex-col items-center gap-5">
+          {live && (
+            <div
+              className="w-full max-w-md animate-[caption-fade-in_0.3s_ease-out] rounded-3xl bg-void/40 px-4 py-3 text-left backdrop-blur-md motion-reduce:animate-none"
+              role="log"
+              aria-live="polite"
+              aria-label="Live transcript"
+            >
+              <div className="max-h-40 overflow-y-auto">
+                {lines.length === 0 ? (
+                  <p className="text-sm text-ink-muted/80">
+                    Your words and mine will show up here as we talk.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2.5">
+                    {lines.map((line, i) => (
+                      <p key={i} className="text-sm leading-relaxed">
+                        <span
+                          className={`mr-2 text-[10px] font-semibold tracking-[0.15em] ${
+                            line.role === 'you' ? 'text-ink-muted' : 'text-ember'
+                          }`}
+                        >
+                          {line.role === 'you' ? 'YOU' : 'COMPANION'}
+                        </span>
+                        <span className={line.role === 'you' ? 'text-ink-muted' : 'font-medium text-ink'}>
+                          {line.text}
+                        </span>
+                      </p>
+                    ))}
+                    <div ref={transcriptEndRef} />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {!live ? (
+            <div className="flex w-full max-w-sm flex-col items-center gap-4">
+              <button
+                type="button"
+                onClick={startCall}
+                disabled={connecting}
+                className={`flex min-h-14 w-full items-center justify-center gap-3 rounded-full bg-ink px-10 text-base font-semibold text-void shadow-[0_8px_30px_-6px_rgba(0,0,0,0.6)] transition active:scale-95 disabled:opacity-50 ${focusRing}`}
+              >
+                <MicIcon className="h-5 w-5" />
+                {connecting ? 'Connecting…' : 'Start talking'}
+              </button>
+              <button
+                type="button"
+                onClick={onOpenFallback}
+                className={`min-h-14 text-xs tracking-wide text-ink-muted underline-offset-4 transition hover:text-ink hover:underline ${focusRing} rounded`}
+              >
+                No mic? Use tap-only support instead
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-5 rounded-full border border-line/60 bg-card/70 px-5 py-3 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.7)] backdrop-blur-xl">
+              <button
+                type="button"
+                onClick={toggleCamera}
+                aria-pressed={cameraOn}
+                aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'}
+                className={`flex h-14 w-14 items-center justify-center rounded-full border transition active:scale-90 ${focusRing} ${
+                  cameraOn ? 'border-ember bg-ember-soft text-ember' : 'border-line/80 bg-void/40 text-ink-muted hover:text-ink'
+                }`}
+              >
+                <CameraIcon className="h-6 w-6" off={!cameraOn} />
+              </button>
+
+              <button
+                type="button"
+                onClick={endCall}
+                aria-label="End conversation"
+                className={`flex h-16 w-16 items-center justify-center rounded-full bg-red-500 text-white shadow-[0_6px_20px_-4px_rgba(239,68,68,0.7)] transition active:scale-90 ${focusRing}`}
+              >
+                <EndCallIcon className="h-6 w-6" />
+              </button>
+
+              <button
+                type="button"
+                onClick={onOpenFallback}
+                aria-label="Open tap-only support"
+                className={`flex h-14 w-14 items-center justify-center rounded-full border border-line/80 bg-void/40 text-ink-muted transition hover:text-ink active:scale-90 ${focusRing}`}
+              >
+                <MenuIcon className="h-5 w-5" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
