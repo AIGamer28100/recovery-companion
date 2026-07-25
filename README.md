@@ -77,7 +77,9 @@ out loud. Fully working, real Gemini calls throughout:
 
 ### If you're a caregiver
 
-- Link to your person by the email they signed in with.
+- **The person in recovery invites you** — they enter your Google email during their own
+  onboarding. You then just sign in and pick "I'm a caregiver"; there is nothing to type
+  and no way to attach yourself to someone who didn't nominate you.
 - See their real activity stream, live, as it happens (Firestore `onSnapshot`).
 - **Generate a script grounded in their actual recent patterns**, not a generic template.
   The prompt is built from a real summary of their logged events ("3 craving spikes and a
@@ -178,10 +180,17 @@ material, and by grepping the production bundle: neither appears in either.
 ### Rules and known gaps
 
 - Firestore rules (`firestore.rules`) default-deny everything, scope each user to their
-  own data, validate every field's type/enum/size, and make events and alerts
-  append-only. A caregiver can only read a patient's data if that patient's document
-  explicitly lists their uid, and a caregiver can only ever add *their own* uid to that
-  list.
+  own data, validate every field's type/enum/size, and make events, alerts, incidents
+  and sessions append-only.
+- **Linking is patient-initiated and consent-based.** A patient nominates a caregiver by
+  email on their own profile; the caregiver is then recognised by their verified
+  `auth.token.email`. A caregiver can never attach themselves to someone who didn't
+  invite them, and revoking access is just removing the email.
+- **Profile reads are scoped, not open.** `users/{uid}` is readable only by its owner or
+  a nominated caregiver. Because rules are evaluated per document, a caregiver's
+  `array-contains` query for their own email succeeds while an unconstrained listing of
+  `/users` is denied — so the collection can't be enumerated and `emergencyContact` (a
+  third party's name and phone) can't be harvested.
 - No secrets in the repo. Client Firebase config comes from environment variables at
   build time; the Gemini key never reaches the client at all thanks to Firebase AI Logic.
 
@@ -190,11 +199,9 @@ material, and by grepping the production bundle: neither appears in either.
 1. **Firebase App Check is not configured.** Firebase AI Logic recommends it to stop
    unauthorized clients burning your Gemini quota. It's the first thing to add before any
    real-world release.
-2. **Profile documents (`users/{uid}`) are readable by any authenticated user.** They hold
-   only a role and an email — no clinical content — and this is what lets a caregiver look
-   up their person by email at link time without a backend to do it server-side. The
-   actual sensitive data (`events`, `alerts`) stays strictly scoped. With a backend, that
-   lookup belongs server-side.
+2. **Relapse snapshots live in Firestore as base64, not Cloud Storage.** That keeps the
+   Spark plan viable and the read path rule-scoped, but a production build should move
+   them to Storage with signed URLs and a retention policy.
 3. **Live voice needs microphone permission and a modern browser.** No mic, or a browser
    without WebSocket/`getUserMedia` support, means falling back to the tap-only screen.
 

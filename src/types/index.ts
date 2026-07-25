@@ -35,9 +35,10 @@ export interface UserProfile {
    * caregiver receiving alerts. Null means they're relying on public helplines.
    */
   emergencyContact?: { name: string; phone: string } | null
-  // Patients: uids of caregivers who may read their events/alerts.
-  linkedCaregiverUids?: string[]
-  // Caregivers: the single patient they're linked to, if any.
-  linkedPatientUid?: string | null
+  /**
+   * Patients only: emails of caregivers this patient nominated. This is the sole
+   * source of caregiver authority — a caregiver can never add themselves.
+   */
+  linkedCaregiverEmails?: string[]
   createdAt: unknown
 }

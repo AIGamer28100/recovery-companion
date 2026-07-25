@@ -8,18 +8,18 @@ rules_version = '2';
 // Fields:
 //   - role: 'patient' | 'caregiver' (required, immutable after create)
 //   - email: string, <= 200 chars (required, immutable after create)
-//   - linkedCaregiverUids: string[] (patient only) — uids allowed to read this
-//     patient's events/alerts. Grows only via a caregiver adding their own uid.
-//   - linkedPatientUid: string | null (caregiver only) — set at create time by
-//     looking up a patient profile by email; immutable after create.
+//   - displayName / photoURL: from the Google account (optional)
+//   - emergencyContact: {name, phone} | null — a third party's PII, so profile
+//     reads are NOT open to all authenticated users.
+//   - linkedCaregiverEmails: string[] (patient only, max 5) — the caregivers the
+//     PATIENT nominated. This is the sole source of caregiver authority.
 //   - createdAt: timestamp (required, immutable, must equal request.time)
 //
-// KNOWN TRADE-OFF: profile docs (role + email only, no clinical data) are
-// readable by any authenticated user so a caregiver can look themselves up
-// against a patient's email at linking time — there's no backend available on
-// this project's plan to do that lookup server-side. events/ and alerts/
-// (the actual clinical content) stay strictly scoped to the owner and their
-// explicitly linked caregiver(s).
+// LINKING MODEL: patient-initiated only. The patient adds a caregiver's email to
+// their own doc; the caregiver is recognised by their verified `auth.token.email`.
+// A caregiver can never grant themselves access. Profile reads are scoped to the
+// owner and nominated caregivers, so no one can enumerate users or harvest
+// emergencyContact PII.
 //
 // Collection: users/{userId}/events/{eventId}
 // Fields:
@@ -36,8 +36,8 @@ rules_version = '2';
 //                  'elevated_stress','manual'] (required, immutable)
 //   - createdAt: timestamp (required, immutable, must equal request.time)
 //
-// events/alerts are readable by: the owning user, or a uid listed in that
-// user's own linkedCaregiverUids. They are append-only (no update rule).
+// events/alerts/incidents/sessions are readable by the owning user, or a
+// caregiver whose email that user nominated. All are append-only.
 //
 // ===============================================================
 
@@ -71,12 +71,6 @@ service cloud.firestore {
 
     function isRecentServerTimestamp(field) {
       return request.resource.data[field] == request.time;
-    }
-
-    function isLinkedCaregiver(patientUid) {
-      return isAuthenticated() &&
-        exists(/databases/$(database)/documents/users/$(patientUid)) &&
-        get(/databases/$(database)/documents/users/$(patientUid)).data.linkedCaregiverUids.hasAny([request.auth.uid]);
     }
 
     function isValidEvent() {
@@ -119,8 +113,8 @@ service cloud.firestore {
     function isValidProfileCreate() {
       let d = request.resource.data;
       return hasOnlyAllowedFields(['role', 'email', 'displayName', 'photoURL',
-                                   'linkedCaregiverUids', 'linkedPatientUid',
-                                   'emergencyContact', 'createdAt']) &&
+                                   'linkedCaregiverEmails', 'emergencyContact',
+                                   'createdAt']) &&
              hasRequiredFields(['role', 'email', 'createdAt']) &&
              d.role in ['patient', 'caregiver'] &&
              d.email is string && d.email.size() <= 200 &&
@@ -131,50 +125,70 @@ service cloud.firestore {
                 d.emergencyContact.keys().hasAll(['name', 'phone']) &&
                 d.emergencyContact.name is string && d.emergencyContact.name.size() <= 100 &&
                 d.emergencyContact.phone is string && d.emergencyContact.phone.size() <= 30)) &&
-             (!('linkedCaregiverUids' in d) || (d.linkedCaregiverUids is list && d.linkedCaregiverUids.size() == 0)) &&
-             (!('linkedPatientUid' in d) || d.linkedPatientUid == null || d.linkedPatientUid is string);
+             (!('linkedCaregiverEmails' in d) ||
+               (d.linkedCaregiverEmails is list && d.linkedCaregiverEmails.size() <= 5));
     }
 
-    // A caregiver may add ONLY their own uid to another user's
-    // linkedCaregiverUids, only if that target user is a patient, and may not
-    // touch any other field or remove any existing entry.
-    function isValidCaregiverSelfLink() {
-      let before = resource.data.role == 'patient' && 'linkedCaregiverUids' in resource.data
-        ? resource.data.linkedCaregiverUids : [];
-      let after = request.resource.data.linkedCaregiverUids;
+    // Linking is PATIENT-INITIATED and keyed on the caregiver's verified auth
+    // email. The patient nominates who may see their data; a caregiver can never
+    // attach themselves to someone who didn't invite them.
+    //
+    // This replaces an earlier caregiver-self-link rule that only checked the
+    // TARGET was a patient and never that the requester had been invited — which
+    // let any authenticated account link itself to any patient and read their
+    // relapse snapshots. Do not reintroduce a requester-asserted link.
+    function isInvitedCaregiver(patientUid) {
       return isAuthenticated() &&
-        resource.data.role == 'patient' &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['linkedCaregiverUids']) &&
-        after is list &&
-        after.hasAll(before) &&
-        after.hasOnly(before.concat([request.auth.uid]));
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/users/$(patientUid)) &&
+        get(/databases/$(database)/documents/users/$(patientUid))
+          .data.get('linkedCaregiverEmails', [])
+          .hasAny([request.auth.token.email]);
+    }
+
+    // The patient editing their own nominated caregivers / emergency contact.
+    function isValidOwnerProfileUpdate() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly(['emergencyContact', 'linkedCaregiverEmails']) &&
+        (!('linkedCaregiverEmails' in request.resource.data) ||
+          (request.resource.data.linkedCaregiverEmails is list &&
+           request.resource.data.linkedCaregiverEmails.size() <= 5)) &&
+        (!('emergencyContact' in request.resource.data) ||
+          request.resource.data.emergencyContact == null ||
+          (request.resource.data.emergencyContact is map &&
+           request.resource.data.emergencyContact.keys().hasOnly(['name', 'phone']) &&
+           request.resource.data.emergencyContact.keys().hasAll(['name', 'phone']) &&
+           request.resource.data.emergencyContact.name is string &&
+           request.resource.data.emergencyContact.name.size() <= 100 &&
+           request.resource.data.emergencyContact.phone is string &&
+           request.resource.data.emergencyContact.phone.size() <= 30));
     }
 
     // ---------------------------------------------------------------
     // users/{uid} — profile doc
     // ---------------------------------------------------------------
     match /users/{uid} {
-      allow read: if isAuthenticated();
+      // Owner, or a caregiver this user explicitly nominated by email.
+      //
+      // Evaluated per document, so a caregiver's
+      // `where('linkedCaregiverEmails','array-contains', <their email>)` query
+      // succeeds while an unconstrained listing of /users is denied — which is
+      // what stops profile (and emergencyContact PII) enumeration.
+      allow read: if isOwner(uid) ||
+        (isAuthenticated() &&
+         request.auth.token.email != null &&
+         resource.data.get('linkedCaregiverEmails', []).hasAny([request.auth.token.email]));
       allow create: if isOwner(uid) && isValidProfileCreate();
       // Either a caregiver linking themselves, or the owner correcting their own
       // emergency contact from Settings. Nothing else about a profile is mutable.
-      allow update: if isValidCaregiverSelfLink() ||
-        (isOwner(uid) &&
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact']) &&
-         request.resource.data.emergencyContact is map &&
-         request.resource.data.emergencyContact.keys().hasOnly(['name', 'phone']) &&
-         request.resource.data.emergencyContact.keys().hasAll(['name', 'phone']) &&
-         request.resource.data.emergencyContact.name is string &&
-         request.resource.data.emergencyContact.name.size() <= 100 &&
-         request.resource.data.emergencyContact.phone is string &&
-         request.resource.data.emergencyContact.phone.size() <= 30);
+      allow update: if isOwner(uid) && isValidOwnerProfileUpdate();
       allow delete: if false;
 
       // -------------------------------------------------------------
       // users/{userId}/events/{eventId} — append-only
       // -------------------------------------------------------------
       match /events/{eventId} {
-        allow read: if isOwner(uid) || isLinkedCaregiver(uid);
+        allow read: if isOwner(uid) || isInvitedCaregiver(uid);
         allow create: if isOwner(uid) && isValidEvent();
         allow update, delete: if false;
       }
@@ -183,7 +197,7 @@ service cloud.firestore {
       // users/{userId}/alerts/{alertId} — append-only
       // -------------------------------------------------------------
       match /alerts/{alertId} {
-        allow read: if isOwner(uid) || isLinkedCaregiver(uid);
+        allow read: if isOwner(uid) || isInvitedCaregiver(uid);
         allow create: if isOwner(uid) && isValidAlert();
         allow update, delete: if false;
       }
@@ -205,7 +219,7 @@ service cloud.firestore {
       }
 
       match /incidents/{incidentId} {
-        allow read: if isOwner(uid) || isLinkedCaregiver(uid);
+        allow read: if isOwner(uid) || isInvitedCaregiver(uid);
         allow create: if isOwner(uid) && isValidIncident();
         allow update, delete: if false;
       }

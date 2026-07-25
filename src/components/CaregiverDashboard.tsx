@@ -27,9 +27,11 @@ const TYPE_LABELS: Record<string, string> = {
 interface Props {
   uid: string
   profile: UserProfile
+  /** Resolved from who nominated this caregiver; null until known. */
+  patientUid: string | null
 }
 
-export default function CaregiverDashboard({ uid, profile }: Props) {
+export default function CaregiverDashboard({ uid, patientUid }: Props) {
   const [events, setEvents] = useState<PatientEvent[]>([])
   const [alerts, setAlerts] = useState<PatientAlert[]>([])
   const [incidents, setIncidents] = useState<PatientIncident[]>([])
@@ -39,7 +41,6 @@ export default function CaregiverDashboard({ uid, profile }: Props) {
   // All three are live Firestore snapshot listeners — the dashboard updates the
   // moment something happens on the patient's device, with no reload.
   useEffect(() => {
-    const patientUid = profile.linkedPatientUid
     if (!patientUid) return
     const unsubs = [
       listenToPatientEvents(patientUid, setEvents),
@@ -47,7 +48,7 @@ export default function CaregiverDashboard({ uid, profile }: Props) {
       listenToPatientIncidents(patientUid, setIncidents),
     ]
     return () => unsubs.forEach((u) => u())
-  }, [profile.linkedPatientUid])
+  }, [patientUid])
 
   const escalations = incidents.filter((i) => i.stage === 'escalated')
 
@@ -66,10 +67,10 @@ export default function CaregiverDashboard({ uid, profile }: Props) {
     }
   }
 
-  if (!profile.linkedPatientUid) {
+  if (!patientUid) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-void px-6 text-center text-ink">
-        <p className="font-display text-xl">No linked account yet</p>
+        <h1 className="font-display text-xl">No linked account yet</h1>
         <p className="max-w-sm text-sm text-ink-muted">
           We couldn&apos;t find a patient account with that email when you signed up. Ask them to
           sign in at least once, then reload this page.
@@ -86,7 +87,7 @@ export default function CaregiverDashboard({ uid, profile }: Props) {
       <div className="ember-field" />
       <div className="relative z-10 mx-auto flex max-w-2xl flex-col gap-6">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium tracking-[0.2em] text-ink-muted">CAREGIVER VIEW</span>
+          <h1 className="text-xs font-medium tracking-[0.2em] text-ink-muted">CAREGIVER VIEW</h1>
           <button type="button" onClick={() => signOut(auth)} className="min-h-14 text-xs text-ink-muted">
             Sign out
           </button>

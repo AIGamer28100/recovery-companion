@@ -31,54 +31,57 @@ export default function EvaluatorDock({
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-50">
-      {open && (
-        <div className="mx-auto max-w-md border-t border-line bg-card px-5 py-4 lg:max-w-2xl">
-          <p className="mb-3 text-xs text-ink-muted">
-            Each control runs the real code path — live Gemini calls and real database writes,
-            the same as the organic trigger.
-          </p>
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onSimulateCrisis}
-              className="min-h-14 w-full rounded-xl border border-line px-4 text-left text-sm text-ink transition hover:border-ember/40 disabled:opacity-40"
-            >
-              Simulate crisis event
-              <span className="block text-xs text-ink-muted">
-                Fires the proactive engine&apos;s elevated-stress intervention
-              </span>
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onTestCaregiverSync}
-              className="min-h-14 w-full rounded-xl border border-line px-4 text-left text-sm text-ink transition hover:border-ember/40 disabled:opacity-40"
-            >
-              Test caregiver sync
-              <span className="block text-xs text-ink-muted">
-                Generates a caregiver script and writes it to their live feed
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={onToggleVoiceBlocked}
-              className="min-h-14 w-full rounded-xl border border-line px-4 text-left text-sm text-ink transition hover:border-ember/40"
-            >
-              {voiceBlocked ? 'Restore voice mode' : 'Simulate voice unavailable'}
-              <span className="block text-xs text-ink-muted">
-                {voiceBlocked
-                  ? 'Re-enable the live voice channel'
-                  : 'Force the tap-only fallback, as on a device with no mic'}
-              </span>
-            </button>
-          </div>
+      <div
+        id="evaluator-tools-panel"
+        hidden={!open}
+        className="mx-auto max-w-md border-t border-line bg-card px-5 py-4 lg:max-w-2xl"
+      >
+        <p className="mb-3 text-xs text-ink-muted">
+          Each control runs the real code path — live Gemini calls and real database writes,
+          the same as the organic trigger.
+        </p>
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onSimulateCrisis}
+            className="min-h-14 w-full rounded-xl border border-line px-4 text-left text-sm text-ink transition hover:border-ember/40 disabled:opacity-40"
+          >
+            Simulate crisis event
+            <span className="block text-xs text-ink-muted">
+              Fires the proactive engine&apos;s elevated-stress intervention
+            </span>
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onTestCaregiverSync}
+            className="min-h-14 w-full rounded-xl border border-line px-4 text-left text-sm text-ink transition hover:border-ember/40 disabled:opacity-40"
+          >
+            Test caregiver sync
+            <span className="block text-xs text-ink-muted">
+              Generates a caregiver script and writes it to their live feed
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={onToggleVoiceBlocked}
+            className="min-h-14 w-full rounded-xl border border-line px-4 text-left text-sm text-ink transition hover:border-ember/40"
+          >
+            {voiceBlocked ? 'Restore voice mode' : 'Simulate voice unavailable'}
+            <span className="block text-xs text-ink-muted">
+              {voiceBlocked
+                ? 'Re-enable the live voice channel'
+                : 'Force the tap-only fallback, as on a device with no mic'}
+            </span>
+          </button>
         </div>
-      )}
+      </div>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
+        aria-controls="evaluator-tools-panel"
         className="w-full bg-void/95 py-2 text-center text-[10px] tracking-[0.2em] text-ink-muted/60 transition hover:text-ink-muted"
       >
         {open ? 'HIDE EVALUATOR TOOLS' : 'EVALUATOR TOOLS'}

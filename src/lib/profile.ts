@@ -14,14 +14,14 @@ import {
 import { db } from './firebase'
 import type { UserProfile } from '../types'
 
-export async function getUserProfile(uid: string): Promise<UserProfile | null> {
-  const snap = await getDoc(doc(db, 'users', uid))
-  return snap.exists() ? (snap.data() as UserProfile) : null
-}
-
 export interface GoogleIdentity {
   displayName: string | null
   photoURL: string | null
+}
+
+export async function getUserProfile(uid: string): Promise<UserProfile | null> {
+  const snap = await getDoc(doc(db, 'users', uid))
+  return snap.exists() ? (snap.data() as UserProfile) : null
 }
 
 export async function createPatientProfile(
@@ -29,19 +29,55 @@ export async function createPatientProfile(
   email: string,
   emergencyContact: { name: string; phone: string },
   identity: GoogleIdentity,
+  caregiverEmail?: string,
 ): Promise<void> {
+  const caregiverEmails = caregiverEmail?.trim()
+    ? [caregiverEmail.trim().toLowerCase()]
+    : []
   await setDoc(doc(db, 'users', uid), {
     role: 'patient',
     email,
     displayName: identity.displayName,
     photoURL: identity.photoURL,
-    linkedCaregiverUids: [],
     emergencyContact,
+    linkedCaregiverEmails: caregiverEmails,
     createdAt: serverTimestamp(),
   })
 }
 
-/** Lets someone correct their emergency contact later from Settings. */
+export async function createCaregiverProfile(
+  uid: string,
+  email: string,
+  identity: GoogleIdentity,
+): Promise<void> {
+  await setDoc(doc(db, 'users', uid), {
+    role: 'caregiver',
+    email,
+    displayName: identity.displayName,
+    photoURL: identity.photoURL,
+    createdAt: serverTimestamp(),
+  })
+}
+
+/**
+ * Finds the patient who nominated this caregiver.
+ *
+ * Security rules evaluate `allow read` per document, so this constrained query
+ * returns only patients that actually listed this email. An unconstrained listing
+ * of /users is denied outright — which is what prevents user enumeration.
+ */
+export async function findLinkedPatient(caregiverEmail: string): Promise<string | null> {
+  const snap = await getDocs(
+    query(
+      collection(db, 'users'),
+      where('linkedCaregiverEmails', 'array-contains', caregiverEmail.trim().toLowerCase()),
+      limit(1),
+    ),
+  )
+  return snap.docs[0]?.id ?? null
+}
+
+/** Lets someone correct their emergency contact later. */
 export async function updateEmergencyContact(
   uid: string,
   emergencyContact: { name: string; phone: string },
@@ -49,43 +85,9 @@ export async function updateEmergencyContact(
   await updateDoc(doc(db, 'users', uid), { emergencyContact })
 }
 
-interface PatientMatch {
-  uid: string
-  profile: UserProfile
-}
-
-async function findPatientByEmail(email: string): Promise<PatientMatch | null> {
-  const q = query(collection(db, 'users'), where('email', '==', email), limit(5))
-  const snap = await getDocs(q)
-  for (const d of snap.docs) {
-    const data = d.data() as UserProfile
-    if (data.role === 'patient') return { uid: d.id, profile: data }
-  }
-  return null
-}
-
-export async function createCaregiverProfileAndLink(
-  uid: string,
-  email: string,
-  patientEmail: string,
-  identity: GoogleIdentity,
-): Promise<{ linked: boolean }> {
-  const match = await findPatientByEmail(patientEmail.trim().toLowerCase())
-
-  await setDoc(doc(db, 'users', uid), {
-    role: 'caregiver',
-    email,
-    displayName: identity.displayName,
-    photoURL: identity.photoURL,
-    linkedPatientUid: match?.uid ?? null,
-    createdAt: serverTimestamp(),
+/** A patient nominating a caregiver. Only the patient can do this. */
+export async function nominateCaregiver(uid: string, caregiverEmail: string): Promise<void> {
+  await updateDoc(doc(db, 'users', uid), {
+    linkedCaregiverEmails: arrayUnion(caregiverEmail.trim().toLowerCase()),
   })
-
-  if (match) {
-    await updateDoc(doc(db, 'users', match.uid), {
-      linkedCaregiverUids: arrayUnion(uid),
-    })
-  }
-
-  return { linked: match !== null }
 }

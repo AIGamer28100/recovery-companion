@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { createPatientProfile, createCaregiverProfileAndLink } from '../lib/profile'
+import { createPatientProfile, createCaregiverProfile, findLinkedPatient } from '../lib/profile'
 import type { UserProfile } from '../types'
 
 interface Props {
@@ -13,7 +13,7 @@ interface Props {
 export default function RoleOnboarding({ uid, email, displayName, photoURL, onDone }: Props) {
   const identity = { displayName, photoURL }
   const [step, setStep] = useState<'choose' | 'link' | 'support'>('choose')
-  const [patientEmail, setPatientEmail] = useState('')
+  const [caregiverEmail, setCaregiverEmail] = useState('')
   const [contactName, setContactName] = useState('')
   const [contactPhone, setContactPhone] = useState('')
   const [busy, setBusy] = useState(false)
@@ -25,38 +25,32 @@ export default function RoleOnboarding({ uid, email, displayName, photoURL, onDo
 
   const finishPatient = async (contact: { name: string; phone: string }) => {
     setBusy(true)
-    await createPatientProfile(uid, email, contact, identity)
+    const nominated = caregiverEmail.trim().toLowerCase()
+    await createPatientProfile(uid, email, contact, identity, nominated)
     onDone({
       role: 'patient',
       email,
       displayName,
       photoURL,
-      linkedCaregiverUids: [],
       emergencyContact: contact,
+      linkedCaregiverEmails: nominated ? [nominated] : [],
       createdAt: null,
     })
   }
 
-  const chooseCaregiver = () => setStep('link')
-
-  const submitLink = async () => {
-    if (!patientEmail.trim()) return
+  const chooseCaregiver = async () => {
+    // No typing and no lookup-by-email: we find whoever nominated THIS account.
     setBusy(true)
     setNotFound(false)
-    const { linked } = await createCaregiverProfileAndLink(uid, email, patientEmail, identity)
-    setBusy(false)
-    if (!linked) {
+    const patientUid = await findLinkedPatient(email)
+    if (!patientUid) {
+      setBusy(false)
       setNotFound(true)
+      setStep('link')
       return
     }
-    onDone({
-      role: 'caregiver',
-      email,
-      displayName,
-      photoURL,
-      linkedPatientUid: null,
-      createdAt: null,
-    })
+    await createCaregiverProfile(uid, email, identity)
+    onDone({ role: 'caregiver', email, displayName, photoURL, createdAt: null })
   }
 
   return (
@@ -108,6 +102,7 @@ export default function RoleOnboarding({ uid, email, displayName, photoURL, onDo
                 value={contactName}
                 onChange={(e) => setContactName(e.target.value)}
                 placeholder="Their name"
+                aria-describedby="contact-required-hint"
                 className="min-h-14 w-full rounded-xl border border-line bg-card px-4 text-center text-ink placeholder:text-ink-muted focus:border-ember focus:outline-none"
               />
               <label htmlFor="contact-phone" className="sr-only">
@@ -119,6 +114,18 @@ export default function RoleOnboarding({ uid, email, displayName, photoURL, onDo
                 value={contactPhone}
                 onChange={(e) => setContactPhone(e.target.value)}
                 placeholder="Their phone number"
+                aria-describedby="contact-required-hint"
+                className="min-h-14 w-full rounded-xl border border-line bg-card px-4 text-center text-ink placeholder:text-ink-muted focus:border-ember focus:outline-none"
+              />
+              <label htmlFor="caregiver-email" className="sr-only">
+                Caregiver's email (optional)
+              </label>
+              <input
+                id="caregiver-email"
+                type="email"
+                value={caregiverEmail}
+                onChange={(e) => setCaregiverEmail(e.target.value)}
+                placeholder="Their Google email (optional)"
                 className="min-h-14 w-full rounded-xl border border-line bg-card px-4 text-center text-ink placeholder:text-ink-muted focus:border-ember focus:outline-none"
               />
               <button
@@ -131,46 +138,37 @@ export default function RoleOnboarding({ uid, email, displayName, photoURL, onDo
               >
                 {busy ? 'Saving…' : 'Save and continue'}
               </button>
-              <p className="text-xs leading-relaxed text-ink-muted/80">
-                One contact is required — on a hard night you shouldn&apos;t have to go looking for
-                a number. Public 24/7 helplines stay one tap away as well.
+              <p id="contact-required-hint" className="text-xs leading-relaxed text-ink-muted/80">
+                A contact is required — on a hard night you shouldn&apos;t have to go looking for a
+                number. Add their Google email too and they can sign in as your caregiver to see
+                your patterns and get alerts. Only you can grant that, and only to an address you
+                enter here.
               </p>
             </div>
           </>
         )}
 
         {step === 'link' && (
-          <>
-            <h1 className="font-display text-2xl font-medium">Link to your person</h1>
-            <p className="text-sm text-ink-muted">
-              Enter the email they used to sign in here, so you can see their patterns and get
-              scripts tailored to what&apos;s actually going on with them.
+          <div role="status" aria-live="polite" className="contents">
+            <h1 className="font-display text-2xl font-medium">No invitation yet</h1>
+            <p className="text-sm leading-relaxed text-ink-muted">
+              {notFound
+                ? "Nobody has added this email as their caregiver yet. For their privacy, only the person in recovery can grant that — ask them to add "
+                : 'Ask the person you support to add '}
+              <span className="text-ink">{email}</span>
+              {' '}in their app, then sign in again.
             </p>
-            <label htmlFor="patient-email" className="sr-only">
-              Patient&apos;s email
-            </label>
-            <input
-              id="patient-email"
-              type="email"
-              value={patientEmail}
-              onChange={(e) => setPatientEmail(e.target.value)}
-              placeholder="their.email@gmail.com"
-              className="min-h-14 w-full rounded-xl border border-line bg-card px-4 text-center text-ink placeholder:text-ink-muted focus:border-ember focus:outline-none"
-            />
-            {notFound && (
-              <p className="text-xs text-ink-muted">
-                No account found with that email yet. They need to sign in at least once first.
-              </p>
-            )}
             <button
               type="button"
-              disabled={busy || !patientEmail.trim()}
-              onClick={submitLink}
-              className="min-h-14 w-full rounded-xl bg-ink text-sm font-semibold text-void transition active:scale-[0.98] disabled:opacity-40"
+              onClick={() => {
+                setNotFound(false)
+                setStep('choose')
+              }}
+              className="min-h-14 w-full rounded-xl border border-line text-sm font-medium text-ink transition hover:border-ember/40"
             >
-              {busy ? 'Linking…' : 'Link account'}
+              Back
             </button>
-          </>
+          </div>
         )}
       </div>
     </div>

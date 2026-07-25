@@ -93,7 +93,7 @@ function MenuIcon({ className }: { className?: string }) {
 
 export default function LiveApp({ uid, profile, onOpenFallback }: Props) {
   const emergencyContact = profile.emergencyContact ?? null
-  const hasLinkedCaregiver = (profile.linkedCaregiverUids?.length ?? 0) > 0
+  const hasLinkedCaregiver = (profile.linkedCaregiverEmails?.length ?? 0) > 0
   const [status, setStatus] = useState<Status>('idle')
   const [cameraOn, setCameraOn] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -115,6 +115,13 @@ export default function LiveApp({ uid, profile, onOpenFallback }: Props) {
   const lastNudgeRef = useRef<number>(0)
   const coachTimerRef = useRef<number | null>(null)
   const cameraOnRef = useRef(false)
+  /**
+   * Bumped by every endCall/unmount. `startCall` re-checks it after each await so
+   * a session opened during teardown can't resurrect itself — without this, tapping
+   * "Start talking" then immediately navigating away leaves an orphaned live mic
+   * session and a stray interval running against an unmounted component.
+   */
+  const callGenerationRef = useRef(0)
 
   const stopVisionCoach = useCallback(() => {
     if (coachTimerRef.current !== null) {
@@ -160,6 +167,7 @@ export default function LiveApp({ uid, profile, onOpenFallback }: Props) {
   linesRef.current = lines
 
   const endCall = useCallback(async () => {
+    callGenerationRef.current += 1
     stopVisionCoach()
     stopCamera()
     // Persist the conversation so the next session can pick up where this left off.
@@ -238,8 +246,14 @@ export default function LiveApp({ uid, profile, onOpenFallback }: Props) {
     setStatus('connecting')
     setErrorMsg(null)
     setLines([])
+    const generation = callGenerationRef.current
+    const isStale = () => generation !== callGenerationRef.current
     try {
       const session = await connectLiveSession()
+      if (isStale()) {
+        void session.close().catch(() => {})
+        return
+      }
       sessionRef.current = session
 
       // startAudioConversation claims the session's single receive() consumer,
@@ -257,7 +271,7 @@ export default function LiveApp({ uid, profile, onOpenFallback }: Props) {
         }
       })
 
-      controllerRef.current = await startAudioConversation(teed, {
+      const controller = await startAudioConversation(teed, {
         functionCallingHandler: async (functionCalls) => {
           const call = functionCalls[0]
           if (call?.name !== 'flagRelapseRisk') {
@@ -288,6 +302,13 @@ export default function LiveApp({ uid, profile, onOpenFallback }: Props) {
           }
         },
       })
+
+      if (isStale()) {
+        void controller.stop().catch(() => {})
+        void session.close().catch(() => {})
+        return
+      }
+      controllerRef.current = controller
 
       lastActivityRef.current = Date.now()
       startVisionCoach()
