@@ -1,0 +1,111 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users/{userId}/events/{eventId}
+// Fields:
+//   - type: string, one of ['physical_tension','sensory_overload','craving_spike',
+//           'elevated_stress','reset','checkin'] (required, immutable)
+//   - mood: string|null, one of ['calm','anxious','irritable','low','overwhelmed'] or null (required)
+//   - script: string, <= 2000 chars (optional)
+//   - createdAt: timestamp (required, immutable, must equal request.time)
+//
+// Collection: users/{userId}/alerts/{alertId}
+// Fields:
+//   - script: string, <= 2000 chars (required)
+//   - triggeredBy: string, one of ['physical_tension','sensory_overload','craving_spike',
+//                  'elevated_stress','manual'] (required, immutable)
+//   - createdAt: timestamp (required, immutable, must equal request.time)
+//
+// Every document is only readable/writable by the authenticated user who owns
+// the parent users/{userId} path. No document is ever created, updated, or
+// deleted by anyone else. Documents are immutable after creation (no update
+// rule is defined for events/alerts) — the app only ever creates and reads them.
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------
+    // Helper functions
+    // ---------------------------------------------------------------
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidOptionalString(field, maxLen) {
+      return !(field in request.resource.data) ||
+             (request.resource.data[field] is string &&
+              request.resource.data[field].size() <= maxLen);
+    }
+
+    function isRecentServerTimestamp(field) {
+      return request.resource.data[field] == request.time;
+    }
+
+    function isValidEvent() {
+      let allowedTypes = ['physical_tension', 'sensory_overload', 'craving_spike',
+                           'elevated_stress', 'reset', 'checkin'];
+      let allowedMoods = ['calm', 'anxious', 'irritable', 'low', 'overwhelmed'];
+      return hasOnlyAllowedFields(['type', 'mood', 'script', 'createdAt']) &&
+             hasRequiredFields(['type', 'mood', 'createdAt']) &&
+             request.resource.data.type is string &&
+             request.resource.data.type in allowedTypes &&
+             (request.resource.data.mood == null || request.resource.data.mood in allowedMoods) &&
+             isValidOptionalString('script', 2000) &&
+             isRecentServerTimestamp('createdAt');
+    }
+
+    function isValidAlert() {
+      let allowedTriggers = ['physical_tension', 'sensory_overload', 'craving_spike',
+                              'elevated_stress', 'manual'];
+      return hasOnlyAllowedFields(['script', 'triggeredBy', 'createdAt']) &&
+             hasRequiredFields(['script', 'triggeredBy', 'createdAt']) &&
+             request.resource.data.script is string &&
+             request.resource.data.script.size() <= 2000 &&
+             request.resource.data.triggeredBy is string &&
+             request.resource.data.triggeredBy in allowedTriggers &&
+             isRecentServerTimestamp('createdAt');
+    }
+
+    // ---------------------------------------------------------------
+    // users/{userId}/events/{eventId} — append-only, owner only
+    // ---------------------------------------------------------------
+    match /users/{userId}/events/{eventId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidEvent();
+      allow update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------
+    // users/{userId}/alerts/{alertId} — append-only, owner only
+    // ---------------------------------------------------------------
+    match /users/{userId}/alerts/{alertId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidAlert();
+      allow update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------
+    // Default deny everything else
+    // ---------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
