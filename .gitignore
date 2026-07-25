@@ -4,3 +4,7 @@ __pycache__/
 .env
 .DS_Store
 node_modules/
+
+# each challenge is its own standalone repo for submission
+warmup/
+main/
