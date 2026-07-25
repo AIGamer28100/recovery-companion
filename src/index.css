@@ -1,9 +1,48 @@
 @import "tailwindcss";
 
+@theme {
+  --color-void: #0a0a0b;
+  --color-card: #16150f;
+  --color-line: #2a2823;
+  --color-ink: #f3f1ec;
+  --color-ink-muted: #96938c;
+  --color-ember: #d69a52;
+  --color-ember-soft: #d69a5224;
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+}
+
 html, body, #root {
   height: 100%;
 }
 
 body {
   margin: 0;
+  background: var(--color-void);
+}
+
+/* The Ember — a slow, ambient breathing glow anchored behind the app.
+   Present at all times: dim at rest, a little fuller when a scenario is active. */
+.ember-field {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    circle at 50% 18%,
+    var(--color-ember-soft) 0%,
+    transparent 60%
+  );
+  animation: ember-breathe 9s ease-in-out infinite;
+}
+
+@keyframes ember-breathe {
+  0%, 100% { opacity: 0.55; transform: scale(0.94); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ember-field {
+    animation: none;
+    opacity: 0.8;
+  }
 }

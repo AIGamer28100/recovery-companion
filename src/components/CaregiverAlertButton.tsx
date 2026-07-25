@@ -9,7 +9,7 @@ export default function CaregiverAlertButton({ disabled, onTrigger }: Props) {
       type="button"
       disabled={disabled}
       onClick={onTrigger}
-      className="min-h-14 w-full rounded-xl bg-white text-sm font-semibold text-black active:scale-[0.98] disabled:opacity-40"
+      className="min-h-14 w-full rounded-xl bg-ink text-sm font-semibold text-void transition active:scale-[0.98] disabled:opacity-40"
     >
       Caregiver Alert Script
     </button>

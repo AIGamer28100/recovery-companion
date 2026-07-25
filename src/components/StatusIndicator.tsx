@@ -4,15 +4,12 @@ interface Props {
 
 export default function StatusIndicator({ active }: Props) {
   return (
-    <div
-      className="flex items-center justify-center gap-2 py-3 text-xs uppercase tracking-widest text-gray-400"
-      role="status"
-    >
+    <div className="flex items-center gap-2 text-xs font-medium tracking-[0.2em] text-ink-muted" role="status">
       <span
-        className={`h-2 w-2 rounded-full ${active ? 'bg-white animate-pulse' : 'bg-gray-600'}`}
+        className={`h-2 w-2 rounded-full transition-colors ${active ? 'bg-ember' : 'bg-ink-muted/50'}`}
         aria-hidden="true"
       />
-      {active ? 'Active' : 'Calm'}
+      {active ? 'ACTIVE' : 'CALM'}
     </div>
   )
 }

@@ -15,8 +15,10 @@ interface Props {
 
 export default function MoodRow({ selected, onSelect }: Props) {
   return (
-    <div className="flex flex-col gap-2">
-      <span className="text-xs uppercase tracking-widest text-gray-500">How are you right now?</span>
+    <div className="flex flex-col gap-2.5">
+      <span className="text-xs font-medium tracking-[0.2em] text-ink-muted">
+        HOW ARE YOU RIGHT NOW?
+      </span>
       <div className="flex justify-between gap-2">
         {MOODS.map(({ mood, emoji, label }) => (
           <button
@@ -25,8 +27,8 @@ export default function MoodRow({ selected, onSelect }: Props) {
             onClick={() => onSelect(mood)}
             aria-label={label}
             aria-pressed={selected === mood}
-            className={`flex min-h-14 flex-1 items-center justify-center rounded-xl border text-xl active:scale-95 ${
-              selected === mood ? 'border-white bg-white/10' : 'border-gray-800'
+            className={`flex min-h-14 flex-1 items-center justify-center rounded-xl border text-xl transition active:scale-95 ${
+              selected === mood ? 'border-ember bg-ember-soft' : 'border-line bg-card hover:border-ink-muted/40'
             }`}
           >
             <span aria-hidden="true">{emoji}</span>
