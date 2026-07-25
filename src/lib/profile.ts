@@ -19,11 +19,16 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   return snap.exists() ? (snap.data() as UserProfile) : null
 }
 
-export async function createPatientProfile(uid: string, email: string): Promise<void> {
+export async function createPatientProfile(
+  uid: string,
+  email: string,
+  emergencyContact: { name: string; phone: string } | null = null,
+): Promise<void> {
   await setDoc(doc(db, 'users', uid), {
     role: 'patient',
     email,
     linkedCaregiverUids: [],
+    emergencyContact,
     createdAt: serverTimestamp(),
   })
 }

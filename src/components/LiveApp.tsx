@@ -7,7 +7,15 @@ import { VideoFrameStreamer } from '../lib/videoStream'
 import { logEvent, logCaregiverAlert } from '../lib/events'
 import { recordRelapseIncident } from '../lib/incidents'
 import { buildContinuityBriefing, saveSessionTranscript } from '../lib/sessionMemory'
+import {
+  detectCameraAvailability,
+  describeCameraForModel,
+  type CameraAvailability,
+} from '../lib/cameraAvailability'
 import type { RelapseStage } from '../lib/safetyTools'
+import type { UserProfile } from '../types'
+import { describeSupportForModel } from '../lib/emergencyContacts'
+import HelpNowSheet from './HelpNowSheet'
 
 type Status = 'idle' | 'connecting' | 'live' | 'error'
 
@@ -29,6 +37,7 @@ interface TranscriptLine {
 
 interface Props {
   uid: string
+  profile: UserProfile
   onOpenFallback: () => void
 }
 
@@ -82,12 +91,18 @@ function MenuIcon({ className }: { className?: string }) {
   )
 }
 
-export default function LiveApp({ uid, onOpenFallback }: Props) {
+export default function LiveApp({ uid, profile, onOpenFallback }: Props) {
+  const emergencyContact = profile.emergencyContact ?? null
+  const hasLinkedCaregiver = (profile.linkedCaregiverUids?.length ?? 0) > 0
   const [status, setStatus] = useState<Status>('idle')
   const [cameraOn, setCameraOn] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [lines, setLines] = useState<TranscriptLine[]>([])
   const [incidentStage, setIncidentStage] = useState<RelapseStage | null>(null)
+  const [camera, setCamera] = useState<CameraAvailability>({
+    state: 'unsupported',
+    canOffer: false,
+  })
   const transcriptEndRef = useRef<HTMLDivElement | null>(null)
 
   const sessionRef = useRef<LiveSession | null>(null)
@@ -176,6 +191,37 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
     transcriptEndRef.current?.scrollIntoView({ block: 'end' })
   }, [lines])
 
+  // Probe for a usable camera up front (without triggering a permission prompt)
+  // so the companion never offers something this device can't do. Re-checked when
+  // the permission changes, e.g. the user unblocks it mid-call.
+  useEffect(() => {
+    let cancelled = false
+    const refresh = () => {
+      void detectCameraAvailability().then((result) => {
+        if (!cancelled) setCamera(result)
+      })
+    }
+    refresh()
+
+    let permStatus: PermissionStatus | undefined
+    void navigator.permissions
+      ?.query({ name: 'camera' as PermissionName })
+      .then((status) => {
+        permStatus = status
+        status.addEventListener('change', refresh)
+      })
+      .catch(() => {
+        /* Permissions API doesn't support 'camera' here — the initial probe stands. */
+      })
+
+    navigator.mediaDevices?.addEventListener?.('devicechange', refresh)
+    return () => {
+      cancelled = true
+      permStatus?.removeEventListener('change', refresh)
+      navigator.mediaDevices?.removeEventListener?.('devicechange', refresh)
+    }
+  }, [])
+
   // Transcripts arrive as small fragments ("How a", "re yo", "u today?"), so
   // consecutive chunks from the same speaker are merged into one line.
   const appendTranscript = useCallback((role: TranscriptLine['role'], chunk: string) => {
@@ -248,12 +294,19 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
 
       // Opens every call as a continuation: the companion greets them, knows the
       // time of day, and remembers the last conversation.
+      // Re-probe at call time rather than trusting mount-time state — they may
+      // have plugged in a webcam or changed the permission since.
+      const cameraNow = await detectCameraAvailability()
+      setCamera(cameraNow)
+
       const briefing = await buildContinuityBriefing(uid)
       void session
         .sendTextRealtime(
-          `${briefing}\n\n[Also: their camera is currently OFF, but one is available via the camera ` +
-            'button on their screen. If you want to coach them through anything physical, ask them ' +
-            'to turn it on and say why.]',
+          `${briefing}\n\n[Camera: ${describeCameraForModel(cameraNow, false)}]` +
+            `\n\n[Support available to them: ${describeSupportForModel(
+              emergencyContact,
+              hasLinkedCaregiver,
+            )}]`,
         )
         .catch(() => {})
 
@@ -277,8 +330,8 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
       stopCamera()
       void sessionRef.current
         ?.sendTextRealtime(
-          '[Silent director note, not from the user. Their camera is now OFF — you can no longer ' +
-            'see them. Do not comment on it. Keep coaching by voice alone.]',
+          `[Silent director note, not from the user. Their camera is now OFF — you can no longer ` +
+            `see them. Do not comment on it. Keep coaching by voice alone. ${describeCameraForModel(camera, false)}]`,
         )
         .catch(() => {})
       return
@@ -305,7 +358,7 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
       // asking for the camera.
       void session
         .sendTextRealtime(
-          '[Silent director note, not from the user. Their camera is now ON — you can see them. ' +
+          `[Silent director note, not from the user. ${describeCameraForModel(camera, true)} ` +
             'Do not announce this or thank them; just start using it. Say nothing right now unless ' +
             'you were mid-exercise with them.]',
         )
@@ -526,6 +579,7 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
                 <MicIcon className="h-5 w-5" />
                 {connecting ? 'Connecting…' : 'Start talking'}
               </button>
+              <HelpNowSheet contact={emergencyContact} />
               <button
                 type="button"
                 onClick={onOpenFallback}
@@ -539,9 +593,25 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
               <button
                 type="button"
                 onClick={toggleCamera}
+                disabled={!cameraOn && !camera.canOffer}
                 aria-pressed={cameraOn}
-                aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'}
-                className={`flex h-14 w-14 items-center justify-center rounded-full border transition active:scale-90 ${focusRing} ${
+                aria-label={
+                  cameraOn
+                    ? 'Turn camera off'
+                    : camera.state === 'blocked'
+                      ? 'Camera blocked in browser settings'
+                      : camera.state === 'none'
+                        ? 'No camera on this device'
+                        : 'Turn camera on'
+                }
+                title={
+                  !cameraOn && camera.state === 'blocked'
+                    ? 'Camera is blocked in your browser settings'
+                    : !cameraOn && camera.state === 'none'
+                      ? 'No camera found on this device'
+                      : undefined
+                }
+                className={`flex h-14 w-14 items-center justify-center rounded-full border transition active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 ${focusRing} ${
                   cameraOn ? 'border-ember bg-ember-soft text-ember' : 'border-line/80 bg-void/40 text-ink-muted hover:text-ink'
                 }`}
               >

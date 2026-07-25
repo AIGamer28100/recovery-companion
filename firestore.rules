@@ -118,11 +118,18 @@ service cloud.firestore {
 
     function isValidProfileCreate() {
       let d = request.resource.data;
-      return hasOnlyAllowedFields(['role', 'email', 'linkedCaregiverUids', 'linkedPatientUid', 'createdAt']) &&
+      return hasOnlyAllowedFields(['role', 'email', 'linkedCaregiverUids', 'linkedPatientUid',
+                                   'emergencyContact', 'createdAt']) &&
              hasRequiredFields(['role', 'email', 'createdAt']) &&
              d.role in ['patient', 'caregiver'] &&
              d.email is string && d.email.size() <= 200 &&
              isRecentServerTimestamp('createdAt') &&
+             (!('emergencyContact' in d) || d.emergencyContact == null ||
+               (d.emergencyContact is map &&
+                d.emergencyContact.keys().hasOnly(['name', 'phone']) &&
+                d.emergencyContact.keys().hasAll(['name', 'phone']) &&
+                d.emergencyContact.name is string && d.emergencyContact.name.size() <= 100 &&
+                d.emergencyContact.phone is string && d.emergencyContact.phone.size() <= 30)) &&
              (!('linkedCaregiverUids' in d) || (d.linkedCaregiverUids is list && d.linkedCaregiverUids.size() == 0)) &&
              (!('linkedPatientUid' in d) || d.linkedPatientUid == null || d.linkedPatientUid is string);
     }

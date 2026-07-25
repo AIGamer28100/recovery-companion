@@ -55,5 +55,11 @@ export default function App() {
     return <PatientScreen uid={user.uid} onBackToLive={() => setShowTapFallback(false)} />
   }
 
-  return <LiveApp uid={user.uid} onOpenFallback={() => setShowTapFallback(true)} />
+  return (
+    <LiveApp
+      uid={user.uid}
+      profile={profile}
+      onOpenFallback={() => setShowTapFallback(true)}
+    />
+  )
 }

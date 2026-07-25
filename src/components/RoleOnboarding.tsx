@@ -9,15 +9,27 @@ interface Props {
 }
 
 export default function RoleOnboarding({ uid, email, onDone }: Props) {
-  const [step, setStep] = useState<'choose' | 'link'>('choose')
+  const [step, setStep] = useState<'choose' | 'link' | 'support'>('choose')
   const [patientEmail, setPatientEmail] = useState('')
+  const [contactName, setContactName] = useState('')
+  const [contactPhone, setContactPhone] = useState('')
   const [busy, setBusy] = useState(false)
   const [notFound, setNotFound] = useState(false)
 
-  const choosePatient = async () => {
+  // Patients go through a support step before landing in the app: someone to
+  // call matters most at the exact moment they're least able to go looking.
+  const choosePatient = () => setStep('support')
+
+  const finishPatient = async (contact: { name: string; phone: string } | null) => {
     setBusy(true)
-    await createPatientProfile(uid, email)
-    onDone({ role: 'patient', email, linkedCaregiverUids: [], createdAt: null })
+    await createPatientProfile(uid, email, contact)
+    onDone({
+      role: 'patient',
+      email,
+      linkedCaregiverUids: [],
+      emergencyContact: contact,
+      createdAt: null,
+    })
   }
 
   const chooseCaregiver = () => setStep('link')
@@ -62,6 +74,63 @@ export default function RoleOnboarding({ uid, email, onDone }: Props) {
               >
                 I'm a caregiver
               </button>
+            </div>
+          </>
+        )}
+
+        {step === 'support' && (
+          <>
+            <h1 className="font-display text-2xl font-medium">Who should we reach?</h1>
+            <p className="text-sm leading-relaxed text-ink-muted">
+              Add one person you&apos;d want called on a hard night. They&apos;ll be one tap away
+              inside the app, and if you invite them to sign up as your caregiver, they&apos;ll get
+              alerts too.
+            </p>
+            <div className="flex w-full flex-col gap-3">
+              <label htmlFor="contact-name" className="sr-only">
+                Their name
+              </label>
+              <input
+                id="contact-name"
+                type="text"
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+                placeholder="Their name"
+                className="min-h-14 w-full rounded-xl border border-line bg-card px-4 text-center text-ink placeholder:text-ink-muted focus:border-ember focus:outline-none"
+              />
+              <label htmlFor="contact-phone" className="sr-only">
+                Their phone number
+              </label>
+              <input
+                id="contact-phone"
+                type="tel"
+                value={contactPhone}
+                onChange={(e) => setContactPhone(e.target.value)}
+                placeholder="Their phone number"
+                className="min-h-14 w-full rounded-xl border border-line bg-card px-4 text-center text-ink placeholder:text-ink-muted focus:border-ember focus:outline-none"
+              />
+              <button
+                type="button"
+                disabled={busy || !contactName.trim() || !contactPhone.trim()}
+                onClick={() =>
+                  finishPatient({ name: contactName.trim(), phone: contactPhone.trim() })
+                }
+                className="min-h-14 w-full rounded-xl bg-ink text-sm font-semibold text-void transition active:scale-[0.98] disabled:opacity-40"
+              >
+                {busy ? 'Saving…' : 'Save and continue'}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => finishPatient(null)}
+                className="min-h-14 w-full text-xs text-ink-muted underline underline-offset-4 transition hover:text-ink disabled:opacity-40"
+              >
+                I don&apos;t have anyone right now
+              </button>
+              <p className="text-xs leading-relaxed text-ink-muted/80">
+                That&apos;s okay too — public 24/7 helplines stay one tap away, and the companion
+                will stay with you rather than handing you off.
+              </p>
             </div>
           </>
         )}
