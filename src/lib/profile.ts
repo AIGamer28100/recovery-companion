@@ -19,18 +19,34 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   return snap.exists() ? (snap.data() as UserProfile) : null
 }
 
+export interface GoogleIdentity {
+  displayName: string | null
+  photoURL: string | null
+}
+
 export async function createPatientProfile(
   uid: string,
   email: string,
-  emergencyContact: { name: string; phone: string } | null = null,
+  emergencyContact: { name: string; phone: string },
+  identity: GoogleIdentity,
 ): Promise<void> {
   await setDoc(doc(db, 'users', uid), {
     role: 'patient',
     email,
+    displayName: identity.displayName,
+    photoURL: identity.photoURL,
     linkedCaregiverUids: [],
     emergencyContact,
     createdAt: serverTimestamp(),
   })
+}
+
+/** Lets someone correct their emergency contact later from Settings. */
+export async function updateEmergencyContact(
+  uid: string,
+  emergencyContact: { name: string; phone: string },
+): Promise<void> {
+  await updateDoc(doc(db, 'users', uid), { emergencyContact })
 }
 
 interface PatientMatch {
@@ -52,12 +68,15 @@ export async function createCaregiverProfileAndLink(
   uid: string,
   email: string,
   patientEmail: string,
+  identity: GoogleIdentity,
 ): Promise<{ linked: boolean }> {
   const match = await findPatientByEmail(patientEmail.trim().toLowerCase())
 
   await setDoc(doc(db, 'users', uid), {
     role: 'caregiver',
     email,
+    displayName: identity.displayName,
+    photoURL: identity.photoURL,
     linkedPatientUid: match?.uid ?? null,
     createdAt: serverTimestamp(),
   })

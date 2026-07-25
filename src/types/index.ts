@@ -27,6 +27,9 @@ export interface CaregiverAlert {
 export interface UserProfile {
   role: UserRole
   email: string
+  /** From the Google account used to sign in. */
+  displayName?: string | null
+  photoURL?: string | null
   /**
    * Patients only. Someone they can call themselves when there's no linked
    * caregiver receiving alerts. Null means they're relying on public helplines.

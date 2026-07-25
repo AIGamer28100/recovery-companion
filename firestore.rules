@@ -118,7 +118,8 @@ service cloud.firestore {
 
     function isValidProfileCreate() {
       let d = request.resource.data;
-      return hasOnlyAllowedFields(['role', 'email', 'linkedCaregiverUids', 'linkedPatientUid',
+      return hasOnlyAllowedFields(['role', 'email', 'displayName', 'photoURL',
+                                   'linkedCaregiverUids', 'linkedPatientUid',
                                    'emergencyContact', 'createdAt']) &&
              hasRequiredFields(['role', 'email', 'createdAt']) &&
              d.role in ['patient', 'caregiver'] &&
@@ -155,7 +156,18 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isAuthenticated();
       allow create: if isOwner(uid) && isValidProfileCreate();
-      allow update: if isValidCaregiverSelfLink();
+      // Either a caregiver linking themselves, or the owner correcting their own
+      // emergency contact from Settings. Nothing else about a profile is mutable.
+      allow update: if isValidCaregiverSelfLink() ||
+        (isOwner(uid) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact']) &&
+         request.resource.data.emergencyContact is map &&
+         request.resource.data.emergencyContact.keys().hasOnly(['name', 'phone']) &&
+         request.resource.data.emergencyContact.keys().hasAll(['name', 'phone']) &&
+         request.resource.data.emergencyContact.name is string &&
+         request.resource.data.emergencyContact.name.size() <= 100 &&
+         request.resource.data.emergencyContact.phone is string &&
+         request.resource.data.emergencyContact.phone.size() <= 30);
       allow delete: if false;
 
       // -------------------------------------------------------------

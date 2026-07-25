@@ -41,7 +41,13 @@ export default function App() {
 
   if (!profile) {
     return (
-      <RoleOnboarding uid={user.uid} email={user.email ?? ''} onDone={setProfile} />
+      <RoleOnboarding
+        uid={user.uid}
+        email={user.email ?? ''}
+        displayName={user.displayName}
+        photoURL={user.photoURL}
+        onDone={setProfile}
+      />
     )
   }
 

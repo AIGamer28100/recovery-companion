@@ -5,10 +5,13 @@ import type { UserProfile } from '../types'
 interface Props {
   uid: string
   email: string
+  displayName: string | null
+  photoURL: string | null
   onDone: (profile: UserProfile) => void
 }
 
-export default function RoleOnboarding({ uid, email, onDone }: Props) {
+export default function RoleOnboarding({ uid, email, displayName, photoURL, onDone }: Props) {
+  const identity = { displayName, photoURL }
   const [step, setStep] = useState<'choose' | 'link' | 'support'>('choose')
   const [patientEmail, setPatientEmail] = useState('')
   const [contactName, setContactName] = useState('')
@@ -20,12 +23,14 @@ export default function RoleOnboarding({ uid, email, onDone }: Props) {
   // call matters most at the exact moment they're least able to go looking.
   const choosePatient = () => setStep('support')
 
-  const finishPatient = async (contact: { name: string; phone: string } | null) => {
+  const finishPatient = async (contact: { name: string; phone: string }) => {
     setBusy(true)
-    await createPatientProfile(uid, email, contact)
+    await createPatientProfile(uid, email, contact, identity)
     onDone({
       role: 'patient',
       email,
+      displayName,
+      photoURL,
       linkedCaregiverUids: [],
       emergencyContact: contact,
       createdAt: null,
@@ -38,13 +43,20 @@ export default function RoleOnboarding({ uid, email, onDone }: Props) {
     if (!patientEmail.trim()) return
     setBusy(true)
     setNotFound(false)
-    const { linked } = await createCaregiverProfileAndLink(uid, email, patientEmail)
+    const { linked } = await createCaregiverProfileAndLink(uid, email, patientEmail, identity)
     setBusy(false)
     if (!linked) {
       setNotFound(true)
       return
     }
-    onDone({ role: 'caregiver', email, linkedPatientUid: null, createdAt: null })
+    onDone({
+      role: 'caregiver',
+      email,
+      displayName,
+      photoURL,
+      linkedPatientUid: null,
+      createdAt: null,
+    })
   }
 
   return (
@@ -119,17 +131,9 @@ export default function RoleOnboarding({ uid, email, onDone }: Props) {
               >
                 {busy ? 'Saving…' : 'Save and continue'}
               </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => finishPatient(null)}
-                className="min-h-14 w-full text-xs text-ink-muted underline underline-offset-4 transition hover:text-ink disabled:opacity-40"
-              >
-                I don&apos;t have anyone right now
-              </button>
               <p className="text-xs leading-relaxed text-ink-muted/80">
-                That&apos;s okay too — public 24/7 helplines stay one tap away, and the companion
-                will stay with you rather than handing you off.
+                One contact is required — on a hard night you shouldn&apos;t have to go looking for
+                a number. Public 24/7 helplines stay one tap away as well.
               </p>
             </div>
           </>
