@@ -174,6 +174,17 @@ service cloud.firestore {
       // append-only. Holds a snapshot, so it is deliberately readable ONLY by
       // the person themselves and a caregiver they explicitly linked.
       // -------------------------------------------------------------
+      match /sessions/{sessionId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) &&
+          hasOnlyAllowedFields(['transcript', 'createdAt']) &&
+          hasRequiredFields(['transcript', 'createdAt']) &&
+          request.resource.data.transcript is string &&
+          request.resource.data.transcript.size() <= 6000 &&
+          isRecentServerTimestamp('createdAt');
+        allow update, delete: if false;
+      }
+
       match /incidents/{incidentId} {
         allow read: if isOwner(uid) || isLinkedCaregiver(uid);
         allow create: if isOwner(uid) && isValidIncident();

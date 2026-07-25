@@ -6,6 +6,7 @@ import { teeSession } from '../lib/liveTee'
 import { VideoFrameStreamer } from '../lib/videoStream'
 import { logEvent, logCaregiverAlert } from '../lib/events'
 import { recordRelapseIncident } from '../lib/incidents'
+import { buildContinuityBriefing, saveSessionTranscript } from '../lib/sessionMemory'
 import type { RelapseStage } from '../lib/safetyTools'
 
 type Status = 'idle' | 'connecting' | 'live' | 'error'
@@ -140,9 +141,19 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
     setCameraOn(false)
   }, [])
 
+  const linesRef = useRef<TranscriptLine[]>([])
+  linesRef.current = lines
+
   const endCall = useCallback(async () => {
     stopVisionCoach()
     stopCamera()
+    // Persist the conversation so the next session can pick up where this left off.
+    const transcript = linesRef.current
+      .map((l) => `${l.role === 'you' ? 'Them' : 'You'}: ${l.text}`)
+      .join('\n')
+    void saveSessionTranscript(uid, transcript).catch((err) =>
+      console.warn('Could not save session transcript', err),
+    )
     try {
       await controllerRef.current?.stop()
       await sessionRef.current?.close()
@@ -152,7 +163,7 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
     controllerRef.current = null
     sessionRef.current = null
     setStatus('idle')
-  }, [stopCamera, stopVisionCoach])
+  }, [stopCamera, stopVisionCoach, uid])
 
   // Never leave the mic or camera running if this unmounts.
   useEffect(() => {
@@ -235,12 +246,14 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
       lastActivityRef.current = Date.now()
       startVisionCoach()
 
+      // Opens every call as a continuation: the companion greets them, knows the
+      // time of day, and remembers the last conversation.
+      const briefing = await buildContinuityBriefing(uid)
       void session
         .sendTextRealtime(
-          '[Silent director note, not from the user. The call just opened and their camera is OFF, ' +
-            'but a camera IS available — there is a camera button on their screen. If you want to ' +
-            'coach them through anything physical, ask them to turn it on and say why. ' +
-            'Do not greet them because of this note; wait for them to speak first.]',
+          `${briefing}\n\n[Also: their camera is currently OFF, but one is available via the camera ` +
+            'button on their screen. If you want to coach them through anything physical, ask them ' +
+            'to turn it on and say why.]',
         )
         .catch(() => {})
 
