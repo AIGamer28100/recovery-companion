@@ -153,6 +153,30 @@ support.
 
 ## Security
 
+### Credentials
+
+Nothing secret is committed to this repository, and nothing secret reaches the browser.
+
+- **No Gemini API key exists in the client at all.** Every model call goes through
+  Firebase AI Logic, which brokers the request — so there is no AI key in the source,
+  in `.env.example`, in the bundle, or in git history.
+- **Firebase web config is public by design.** `VITE_FIREBASE_*` values ship in the
+  client bundle because the SDK needs them to identify the project. They authorise
+  nothing on their own: access is enforced by Firestore security rules and Auth
+  authorized-domains. They're injected at build time from GitHub Actions secrets rather
+  than being committed.
+- **The deploy service account** lives only as the `FIREBASE_SERVICE_ACCOUNT` GitHub
+  Actions secret. The key file was never written into the repo and was deleted locally
+  after upload.
+- `.gitignore` explicitly excludes `.env`, `.env.*` (except the example), service-account
+  JSON, `.pem` and `.p12`. Only `.env.example` — which contains keys with no values — is
+  tracked.
+
+Verified by scanning full git history (`git log -S`) for the API key and for private-key
+material, and by grepping the production bundle: neither appears in either.
+
+### Rules and known gaps
+
 - Firestore rules (`firestore.rules`) default-deny everything, scope each user to their
   own data, validate every field's type/enum/size, and make events and alerts
   append-only. A caregiver can only read a patient's data if that patient's document

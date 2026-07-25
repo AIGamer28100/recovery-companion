@@ -12,6 +12,16 @@ dist
 dist-ssr
 *.local
 
+# Secrets — never commit. `*.local` already covers .env.local, but be explicit:
+# a plain `.env` or a stray service-account key must never be tracked.
+.env
+.env.*
+!.env.example
+*service-account*.json
+*-sa-key.json
+*.pem
+*.p12
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
