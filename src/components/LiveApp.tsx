@@ -9,11 +9,15 @@ import { logEvent } from '../lib/events'
 type Status = 'idle' | 'connecting' | 'live' | 'error'
 
 /** How often the vision coach considers nudging. */
-const COACH_TICK_MS = 4000
-/** Both sides must have been quiet this long before a nudge is allowed. */
-const QUIET_BEFORE_NUDGE_MS = 11000
+const COACH_TICK_MS = 5000
+/**
+ * Both sides must have been quiet this long before a nudge is even considered.
+ * Generous on purpose: someone going quiet is usually mid-exercise or thinking,
+ * and a companion that pipes up every few seconds is worse than one that waits.
+ */
+const QUIET_BEFORE_NUDGE_MS = 25000
 /** Hard floor between nudges, so a long silence can't turn into a drip of prompts. */
-const MIN_NUDGE_GAP_MS = 22000
+const MIN_NUDGE_GAP_MS = 60000
 
 interface TranscriptLine {
   role: 'you' | 'companion'
@@ -198,6 +202,15 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
       lastActivityRef.current = Date.now()
       startVisionCoach()
 
+      void session
+        .sendTextRealtime(
+          '[Silent director note, not from the user. The call just opened and their camera is OFF, ' +
+            'but a camera IS available — there is a camera button on their screen. If you want to ' +
+            'coach them through anything physical, ask them to turn it on and say why. ' +
+            'Do not greet them because of this note; wait for them to speak first.]',
+        )
+        .catch(() => {})
+
       setStatus('live')
       logEvent(uid, { type: 'live_conversation', mood: null })
     } catch (err) {
@@ -216,6 +229,12 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
   const toggleCamera = async () => {
     if (cameraOn) {
       stopCamera()
+      void sessionRef.current
+        ?.sendTextRealtime(
+          '[Silent director note, not from the user. Their camera is now OFF — you can no longer ' +
+            'see them. Do not comment on it. Keep coaching by voice alone.]',
+        )
+        .catch(() => {})
       return
     }
     const session = sessionRef.current
@@ -236,6 +255,15 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
       // Give the model a moment of real video before the first nudge.
       lastNudgeRef.current = Date.now()
       setCameraOn(true)
+      // Let the model know it can see now, so it can coach visually and stop
+      // asking for the camera.
+      void session
+        .sendTextRealtime(
+          '[Silent director note, not from the user. Their camera is now ON — you can see them. ' +
+            'Do not announce this or thank them; just start using it. Say nothing right now unless ' +
+            'you were mid-exercise with them.]',
+        )
+        .catch(() => {})
     } catch (err) {
       console.error('Camera unavailable', err)
       setErrorMsg('Camera access is blocked, but the conversation is still going.')
