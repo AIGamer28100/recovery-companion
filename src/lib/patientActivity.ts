@@ -65,7 +65,13 @@ export function listenToPatientIncidents(
   })
 }
 
-const TYPE_LABELS: Record<string, string> = {
+/**
+ * Single source of truth for how an event type reads to a human.
+ *
+ * Stored lower-case because these appear mid-sentence in AI prompt summaries;
+ * use `eventLabel()` for UI, which capitalises for standalone display.
+ */
+export const EVENT_LABELS: Record<string, string> = {
   physical_tension: 'physical tension',
   sensory_overload: 'sensory overload',
   craving_spike: 'craving spike',
@@ -73,6 +79,12 @@ const TYPE_LABELS: Record<string, string> = {
   checkin: 'mood check-in',
   reset: 'emergency reset',
   live_conversation: 'live voice conversation',
+}
+
+/** Capitalised label for standalone UI display; falls back to the raw type. */
+export function eventLabel(type: string): string {
+  const label = EVENT_LABELS[type] ?? type
+  return label.charAt(0).toUpperCase() + label.slice(1)
 }
 
 export function summarizeEvents(events: PatientEvent[]): string {
@@ -86,7 +98,7 @@ export function summarizeEvents(events: PatientEvent[]): string {
   }
 
   const parts = Object.entries(counts).map(
-    ([type, count]) => `${count} × ${TYPE_LABELS[type] ?? type}`,
+    ([type, count]) => `${count} × ${EVENT_LABELS[type] ?? type}`,
   )
   const oldest = events[events.length - 1]?.createdAt
   const window =
@@ -94,8 +106,9 @@ export function summarizeEvents(events: PatientEvent[]): string {
       ? `in the last ${Math.max(1, Math.round((Date.now() - oldest.toMillis()) / 60000))} minutes`
       : 'recently'
 
+  const noun = events.length === 1 ? 'event' : 'events'
   return (
-    `Over the ${events.length} most recent events ${window}: ${parts.join(', ')}. ` +
+    `Over the ${events.length} most recent ${noun} ${window}: ${parts.join(', ')}. ` +
     (latestMood ? `Most recently tapped mood: ${latestMood}.` : 'No mood tapped recently.')
   )
 }

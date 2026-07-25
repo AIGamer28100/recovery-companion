@@ -5,9 +5,8 @@ interface Props {
   onSimulateCrisis: () => void
   /** The exact function the Caregiver Alert button calls. */
   onTestCaregiverSync: () => void
-  /** Forces the tap-only fallback, as if mic/voice were unavailable on this device. */
-  voiceBlocked: boolean
-  onToggleVoiceBlocked: () => void
+  /** Returns to the live voice screen — the same navigation as the header link. */
+  onOpenVoiceMode: () => void
   busy: boolean
 }
 
@@ -23,8 +22,7 @@ interface Props {
 export default function EvaluatorDock({
   onSimulateCrisis,
   onTestCaregiverSync,
-  voiceBlocked,
-  onToggleVoiceBlocked,
+  onOpenVoiceMode,
   busy,
 }: Props) {
   const [open, setOpen] = useState(false)
@@ -65,14 +63,12 @@ export default function EvaluatorDock({
           </button>
           <button
             type="button"
-            onClick={onToggleVoiceBlocked}
+            onClick={onOpenVoiceMode}
             className="min-h-14 w-full rounded-xl border border-line px-4 text-left text-sm text-ink transition hover:border-ember/40"
           >
-            {voiceBlocked ? 'Restore voice mode' : 'Simulate voice unavailable'}
+            Open live voice mode
             <span className="block text-xs text-ink-muted">
-              {voiceBlocked
-                ? 'Re-enable the live voice channel'
-                : 'Force the tap-only fallback, as on a device with no mic'}
+              Switches to the Gemini Live screen — real audio session, camera optional
             </span>
           </button>
         </div>

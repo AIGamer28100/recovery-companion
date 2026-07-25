@@ -28,7 +28,6 @@ export default function PatientScreen({ uid, onBackToLive }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [speaking, setSpeaking] = useState(false)
   const [caregiverBusy, setCaregiverBusy] = useState(false)
-  const [voiceBlocked, setVoiceBlocked] = useState(false)
   const [proactive, setProactive] = useState(false)
 
   const active = loading || script !== null
@@ -154,8 +153,7 @@ export default function PatientScreen({ uid, onBackToLive }: Props) {
 
       <EvaluatorDock
         busy={loading || caregiverBusy}
-        voiceBlocked={voiceBlocked}
-        onToggleVoiceBlocked={() => setVoiceBlocked((v) => !v)}
+        onOpenVoiceMode={onBackToLive}
         onSimulateCrisis={triggerProactiveIntervention}
         onTestCaregiverSync={handleCaregiverAlert}
       />

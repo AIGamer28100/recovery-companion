@@ -6,6 +6,7 @@ import {
   listenToPatientAlerts,
   listenToPatientIncidents,
   summarizeEvents,
+  eventLabel,
   type PatientEvent,
   type PatientAlert,
   type PatientIncident,
@@ -13,16 +14,6 @@ import {
 import { generatePersonalizedCaregiverScript } from '../lib/gemini'
 import { logCaregiverAlert } from '../lib/events'
 import type { UserProfile } from '../types'
-
-const TYPE_LABELS: Record<string, string> = {
-  physical_tension: 'Physical tension',
-  sensory_overload: 'Sensory overload',
-  craving_spike: 'Craving spike',
-  elevated_stress: 'Proactive stress alert',
-  checkin: 'Mood check-in',
-  reset: 'Emergency reset',
-  live_conversation: 'Live voice conversation',
-}
 
 interface Props {
   uid: string
@@ -139,7 +130,7 @@ export default function CaregiverDashboard({ uid, patientUid }: Props) {
           <ul className="flex flex-col gap-2">
             {events.slice(0, 8).map((e) => (
               <li key={e.id} className="flex items-center justify-between text-sm">
-                <span className="text-ink">{TYPE_LABELS[e.type] ?? e.type}</span>
+                <span className="text-ink">{eventLabel(e.type)}</span>
                 {e.mood && <span className="text-xs text-ink-muted">{e.mood}</span>}
               </li>
             ))}
