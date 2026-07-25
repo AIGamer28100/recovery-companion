@@ -95,3 +95,26 @@ export async function generateCaregiverScript(
   )
   return result.response.text()
 }
+
+/**
+ * A caregiver-facing script grounded in the patient's actual recent activity
+ * (real event history, not a generic alert kind) — pass a plain-text summary
+ * built from their real Firestore events, e.g. "Last 3 hours: 2 craving spikes,
+ * 1 sensory overload. Most recent mood tapped: overwhelmed."
+ */
+export async function generatePersonalizedCaregiverScript(recentActivitySummary: string): Promise<string> {
+  const model = getGenerativeModel(ai, {
+    model: MODEL_ID,
+    systemInstruction:
+      'You are drafting a short, warm message FOR A CAREGIVER (not the person in recovery), based on a real ' +
+      "summary of their person's recent app activity. Respond to the SPECIFIC pattern described — if it's " +
+      'repeated craving spikes, say so; if things look calmer, say that too. Never invent detail beyond what the ' +
+      'summary gives you. Plainly state what the pattern suggests, then suggest one supportive, non-judgmental ' +
+      'thing the caregiver could say or do right now. Never suggest confrontation or ultimatums. 3-6 short sentences.',
+    generationConfig: RESPONSE_CONFIG,
+  })
+  const result = await model.generateContent(
+    `Here is their recent activity summary: ${recentActivitySummary}`,
+  )
+  return result.response.text()
+}

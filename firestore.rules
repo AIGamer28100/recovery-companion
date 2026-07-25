@@ -4,10 +4,27 @@ rules_version = '2';
 // Assumed Data Model
 // ===============================================================
 //
+// Collection: users/{uid}  (profile doc)
+// Fields:
+//   - role: 'patient' | 'caregiver' (required, immutable after create)
+//   - email: string, <= 200 chars (required, immutable after create)
+//   - linkedCaregiverUids: string[] (patient only) — uids allowed to read this
+//     patient's events/alerts. Grows only via a caregiver adding their own uid.
+//   - linkedPatientUid: string | null (caregiver only) — set at create time by
+//     looking up a patient profile by email; immutable after create.
+//   - createdAt: timestamp (required, immutable, must equal request.time)
+//
+// KNOWN TRADE-OFF: profile docs (role + email only, no clinical data) are
+// readable by any authenticated user so a caregiver can look themselves up
+// against a patient's email at linking time — there's no backend available on
+// this project's plan to do that lookup server-side. events/ and alerts/
+// (the actual clinical content) stay strictly scoped to the owner and their
+// explicitly linked caregiver(s).
+//
 // Collection: users/{userId}/events/{eventId}
 // Fields:
 //   - type: string, one of ['physical_tension','sensory_overload','craving_spike',
-//           'elevated_stress','reset','checkin'] (required, immutable)
+//           'elevated_stress','reset','checkin','live_conversation'] (required, immutable)
 //   - mood: string|null, one of ['calm','anxious','irritable','low','overwhelmed'] or null (required)
 //   - script: string, <= 2000 chars (optional)
 //   - createdAt: timestamp (required, immutable, must equal request.time)
@@ -19,10 +36,8 @@ rules_version = '2';
 //                  'elevated_stress','manual'] (required, immutable)
 //   - createdAt: timestamp (required, immutable, must equal request.time)
 //
-// Every document is only readable/writable by the authenticated user who owns
-// the parent users/{userId} path. No document is ever created, updated, or
-// deleted by anyone else. Documents are immutable after creation (no update
-// rule is defined for events/alerts) — the app only ever creates and reads them.
+// events/alerts are readable by: the owning user, or a uid listed in that
+// user's own linkedCaregiverUids. They are append-only (no update rule).
 //
 // ===============================================================
 
@@ -58,9 +73,15 @@ service cloud.firestore {
       return request.resource.data[field] == request.time;
     }
 
+    function isLinkedCaregiver(patientUid) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(patientUid)) &&
+        get(/databases/$(database)/documents/users/$(patientUid)).data.linkedCaregiverUids.hasAny([request.auth.uid]);
+    }
+
     function isValidEvent() {
       let allowedTypes = ['physical_tension', 'sensory_overload', 'craving_spike',
-                           'elevated_stress', 'reset', 'checkin'];
+                           'elevated_stress', 'reset', 'checkin', 'live_conversation'];
       let allowedMoods = ['calm', 'anxious', 'irritable', 'low', 'overwhelmed'];
       return hasOnlyAllowedFields(['type', 'mood', 'script', 'createdAt']) &&
              hasRequiredFields(['type', 'mood', 'createdAt']) &&
@@ -83,22 +104,58 @@ service cloud.firestore {
              isRecentServerTimestamp('createdAt');
     }
 
-    // ---------------------------------------------------------------
-    // users/{userId}/events/{eventId} — append-only, owner only
-    // ---------------------------------------------------------------
-    match /users/{userId}/events/{eventId} {
-      allow read: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidEvent();
-      allow update, delete: if false;
+    function isValidProfileCreate() {
+      let d = request.resource.data;
+      return hasOnlyAllowedFields(['role', 'email', 'linkedCaregiverUids', 'linkedPatientUid', 'createdAt']) &&
+             hasRequiredFields(['role', 'email', 'createdAt']) &&
+             d.role in ['patient', 'caregiver'] &&
+             d.email is string && d.email.size() <= 200 &&
+             isRecentServerTimestamp('createdAt') &&
+             (!('linkedCaregiverUids' in d) || (d.linkedCaregiverUids is list && d.linkedCaregiverUids.size() == 0)) &&
+             (!('linkedPatientUid' in d) || d.linkedPatientUid == null || d.linkedPatientUid is string);
+    }
+
+    // A caregiver may add ONLY their own uid to another user's
+    // linkedCaregiverUids, only if that target user is a patient, and may not
+    // touch any other field or remove any existing entry.
+    function isValidCaregiverSelfLink() {
+      let before = resource.data.role == 'patient' && 'linkedCaregiverUids' in resource.data
+        ? resource.data.linkedCaregiverUids : [];
+      let after = request.resource.data.linkedCaregiverUids;
+      return isAuthenticated() &&
+        resource.data.role == 'patient' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['linkedCaregiverUids']) &&
+        after is list &&
+        after.hasAll(before) &&
+        after.hasOnly(before.concat([request.auth.uid]));
     }
 
     // ---------------------------------------------------------------
-    // users/{userId}/alerts/{alertId} — append-only, owner only
+    // users/{uid} — profile doc
     // ---------------------------------------------------------------
-    match /users/{userId}/alerts/{alertId} {
-      allow read: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidAlert();
-      allow update, delete: if false;
+    match /users/{uid} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(uid) && isValidProfileCreate();
+      allow update: if isValidCaregiverSelfLink();
+      allow delete: if false;
+
+      // -------------------------------------------------------------
+      // users/{userId}/events/{eventId} — append-only
+      // -------------------------------------------------------------
+      match /events/{eventId} {
+        allow read: if isOwner(uid) || isLinkedCaregiver(uid);
+        allow create: if isOwner(uid) && isValidEvent();
+        allow update, delete: if false;
+      }
+
+      // -------------------------------------------------------------
+      // users/{userId}/alerts/{alertId} — append-only
+      // -------------------------------------------------------------
+      match /alerts/{alertId} {
+        allow read: if isOwner(uid) || isLinkedCaregiver(uid);
+        allow create: if isOwner(uid) && isValidAlert();
+        allow update, delete: if false;
+      }
     }
 
     // ---------------------------------------------------------------

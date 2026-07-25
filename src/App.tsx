@@ -1,85 +1,35 @@
 import { useEffect, useState } from 'react'
-import { onAuthStateChanged, signOut, type User } from 'firebase/auth'
+import { onAuthStateChanged, type User } from 'firebase/auth'
 import { auth } from './lib/firebase'
-import { generateIntervention, generateCaregiverScript } from './lib/gemini'
-import { logEvent, logCaregiverAlert } from './lib/events'
-import { speak } from './lib/speech'
-import type { InterventionKind, Mood, ScenarioKind } from './types'
+import { getUserProfile } from './lib/profile'
+import type { UserProfile } from './types'
 import Login from './components/Login'
-import StatusIndicator from './components/StatusIndicator'
-import PrimaryCard from './components/PrimaryCard'
-import TapMatrix from './components/TapMatrix'
-import MoodRow from './components/MoodRow'
-import BreathingVisualizer from './components/BreathingVisualizer'
-import VoiceIndicator from './components/VoiceIndicator'
-import EmergencyResetButton from './components/EmergencyResetButton'
-import CaregiverAlertButton from './components/CaregiverAlertButton'
+import RoleOnboarding from './components/RoleOnboarding'
+import PatientScreen from './components/PatientScreen'
+import CaregiverDashboard from './components/CaregiverDashboard'
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
-  const [mood, setMood] = useState<Mood | null>(null)
-  const [script, setScript] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [speaking, setSpeaking] = useState(false)
-  const [caregiverBusy, setCaregiverBusy] = useState(false)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [profileLoading, setProfileLoading] = useState(true)
 
   useEffect(() => {
-    return onAuthStateChanged(auth, (u) => {
+    return onAuthStateChanged(auth, async (u) => {
       setUser(u)
       setAuthLoading(false)
+      if (u) {
+        setProfileLoading(true)
+        const p = await getUserProfile(u.uid)
+        setProfile(p)
+        setProfileLoading(false)
+      } else {
+        setProfile(null)
+      }
     })
   }, [])
 
-  const active = loading || script !== null
-
-  const runIntervention = async (kind: InterventionKind) => {
-    if (!user) return
-    setLoading(true)
-    setError(null)
-    try {
-      const context = { mood, timeOfDay: new Date().getHours() }
-      const text = await generateIntervention(kind, context)
-      setScript(text)
-      setSpeaking(true)
-      speak(text)
-      logEvent(user.uid, { type: kind, mood, script: text })
-    } catch (err) {
-      console.error('generateIntervention failed', err)
-      setError('unreachable')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleReset = () => {
-    setScript(null)
-    setError(null)
-    setSpeaking(false)
-    if (user) logEvent(user.uid, { type: 'reset', mood: null })
-  }
-
-  const handleMoodSelect = (m: Mood) => {
-    setMood(m)
-    if (user) logEvent(user.uid, { type: 'checkin', mood: m })
-  }
-
-  const handleCaregiverAlert = async () => {
-    if (!user) return
-    setCaregiverBusy(true)
-    try {
-      const context = { mood, timeOfDay: new Date().getHours() }
-      const alertScript = await generateCaregiverScript('elevated_stress', context)
-      logCaregiverAlert(user.uid, { script: alertScript, triggeredBy: 'manual' })
-    } catch (err) {
-      console.error('generateCaregiverScript failed', err)
-    } finally {
-      setCaregiverBusy(false)
-    }
-  }
-
-  if (authLoading) {
+  if (authLoading || (user && profileLoading)) {
     return <div className="min-h-screen bg-void" />
   }
 
@@ -87,47 +37,15 @@ export default function App() {
     return <Login />
   }
 
-  const scenarioSelect = (kind: ScenarioKind) => runIntervention(kind)
+  if (!profile) {
+    return (
+      <RoleOnboarding uid={user.uid} email={user.email ?? ''} onDone={setProfile} />
+    )
+  }
 
-  return (
-    <div className="relative min-h-screen bg-void text-ink">
-      <div className="ember-field" />
-      <div className="relative z-10 mx-auto flex min-h-screen max-w-md flex-col gap-7 px-5 py-6 lg:max-w-4xl lg:flex-row lg:items-start lg:gap-12 lg:py-10">
-        <div className="flex flex-1 flex-col gap-7">
-          <div className="flex items-center justify-between">
-            <StatusIndicator active={active} />
-            <button
-              type="button"
-              onClick={() => signOut(auth)}
-              className="min-h-14 px-2 text-xs tracking-wide text-ink-muted transition hover:text-ink"
-            >
-              Sign out
-            </button>
-          </div>
+  if (profile.role === 'caregiver') {
+    return <CaregiverDashboard uid={user.uid} profile={profile} />
+  }
 
-          <PrimaryCard
-            loading={loading}
-            error={error}
-            script={script}
-            onSpeakAgain={() => script && speak(script)}
-          />
-
-          <VoiceIndicator speaking={speaking && !loading} />
-
-          {!active && (
-            <>
-              <TapMatrix disabled={loading} onSelect={scenarioSelect} />
-              <BreathingVisualizer />
-              <MoodRow selected={mood} onSelect={handleMoodSelect} />
-            </>
-          )}
-
-          <div className="mt-auto flex flex-col gap-3 pb-4">
-            <EmergencyResetButton onReset={handleReset} />
-            <CaregiverAlertButton disabled={caregiverBusy} onTrigger={handleCaregiverAlert} />
-          </div>
-        </div>
-      </div>
-    </div>
-  )
+  return <PatientScreen uid={user.uid} />
 }
