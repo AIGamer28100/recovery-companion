@@ -3,7 +3,7 @@ import { signOut } from 'firebase/auth'
 import { auth } from '../lib/firebase'
 import { generateIntervention, generateCaregiverScript } from '../lib/gemini'
 import { logEvent, logCaregiverAlert } from '../lib/events'
-import { speak } from '../lib/speech'
+import { speak, stopSpeaking } from '../lib/speech'
 import type { InterventionKind, Mood, ScenarioKind } from '../types'
 import StatusIndicator from './StatusIndicator'
 import PrimaryCard from './PrimaryCard'
@@ -48,6 +48,7 @@ export default function PatientScreen({ uid }: Props) {
   }
 
   const handleReset = () => {
+    stopSpeaking()
     setScript(null)
     setError(null)
     setSpeaking(false)
