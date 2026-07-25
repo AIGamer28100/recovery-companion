@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { startAudioConversation } from 'firebase/ai'
 import type { AudioConversationController, LiveSession } from 'firebase/ai'
-import { createLiveModel, VISION_CHECK_PROMPT } from '../lib/geminiLive'
+import { connectLiveSession, VISION_CHECK_PROMPT } from '../lib/geminiLive'
 import { teeSession } from '../lib/liveTee'
 import { VideoFrameStreamer } from '../lib/videoStream'
 import { logEvent } from '../lib/events'
@@ -175,7 +175,7 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
     setErrorMsg(null)
     setLines([])
     try {
-      const session = await createLiveModel().connect()
+      const session = await connectLiveSession()
       sessionRef.current = session
 
       // startAudioConversation claims the session's single receive() consumer,

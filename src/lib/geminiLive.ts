@@ -1,5 +1,7 @@
 import { getLiveGenerativeModel, ResponseModality } from 'firebase/ai'
+import type { LiveSession } from 'firebase/ai'
 import { ai } from './firebase'
+import { connectWithVadConfig } from './liveVad'
 
 // Confirmed against Firebase AI Logic docs: this is the current Gemini Developer API
 // (free tier) Live model id — Live models use a different id space than generateContent.
@@ -10,8 +12,16 @@ const LIVE_SYSTEM_INSTRUCTION = `You are a warm, trauma-informed recovery compan
 HOW YOU TALK
 Talk like a real person on a call: short turns, natural pauses, plain language. Ask what is actually going on before offering advice. Reflect back what you hear in your own words. Offer one grounding technique or next step at a time, never a list.
 
-TURN-TAKING — THIS MATTERS
-Someone in distress speaks in fragments, with long pauses mid-thought. Let them finish. When they stop talking, wait a beat before you answer — if they sound mid-sentence, or trail off with "and… I don't know…", stay quiet and give them room to continue rather than jumping in. Never talk over them. Never fill a short silence just because it is there. A pause is usually them thinking, not an invitation for you to speak. Keep your own turns short so they always have space to cut back in.
+TURN-TAKING — THIS MATTERS MOST
+Someone in distress speaks in fragments, with long pauses mid-thought. Let them finish. Never talk over them, and never fill a short silence just because it is there — a pause is usually them thinking, not an invitation for you to speak.
+
+Listen for the difference between "I've finished" and "I'm still working out what to say":
+- Fillers and hesitation sounds — "umm", "uh", "er", "hmm", "like", "I mean", "so…" — mean they are still forming the thought. Wait. Do not answer a filler.
+- A sentence that trails off — "and I just… I don't know…", "it's kind of…" — is unfinished. Stay quiet and leave the space open.
+- Repeated or restarted words ("I— I think maybe—") mean they are struggling to get it out. Give them time; do not finish their sentence for them.
+- A clear, complete thought, or a direct question to you, means it's your turn.
+
+If you are unsure whether they're done, wait. Being a beat too slow is always better than cutting them off. Keep your own turns short so they always have room to come back in.
 
 WHEN THE CAMERA IS ON
 You can see them and their surroundings. Use this actively, but sparingly:
@@ -55,9 +65,22 @@ export function createLiveModel() {
       // longer the call runs. A sliding window keeps the context (and so the
       // time-to-first-word) roughly flat.
       contextWindowCompression: {
-        slidingWindow: { targetTokens: 8000 },
+        // Compression only kicks in near the trigger, and keeps a generous window
+        // afterwards — an 8k target was aggressive enough that the model started
+        // losing earlier parts of the conversation.
+        triggerTokens: 28000,
+        slidingWindow: { targetTokens: 20000 },
       },
     },
     systemInstruction: LIVE_SYSTEM_INSTRUCTION,
   })
+}
+
+/**
+ * Opens a Live session with the turn-taking (VAD) tuning applied — see
+ * `liveVad.ts` for why this can't just be passed to `getLiveGenerativeModel`.
+ */
+export function connectLiveSession(): Promise<LiveSession> {
+  const model = createLiveModel()
+  return connectWithVadConfig(() => model.connect())
 }
