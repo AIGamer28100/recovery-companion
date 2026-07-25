@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react'
 import { signOut } from 'firebase/auth'
 import { auth } from '../lib/firebase'
-import { listenToPatientEvents, summarizeEvents, type PatientEvent } from '../lib/patientActivity'
+import {
+  listenToPatientEvents,
+  listenToPatientAlerts,
+  listenToPatientIncidents,
+  summarizeEvents,
+  type PatientEvent,
+  type PatientAlert,
+  type PatientIncident,
+} from '../lib/patientActivity'
 import { generatePersonalizedCaregiverScript } from '../lib/gemini'
 import { logCaregiverAlert } from '../lib/events'
 import type { UserProfile } from '../types'
@@ -23,13 +31,25 @@ interface Props {
 
 export default function CaregiverDashboard({ uid, profile }: Props) {
   const [events, setEvents] = useState<PatientEvent[]>([])
+  const [alerts, setAlerts] = useState<PatientAlert[]>([])
+  const [incidents, setIncidents] = useState<PatientIncident[]>([])
   const [script, setScript] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // All three are live Firestore snapshot listeners — the dashboard updates the
+  // moment something happens on the patient's device, with no reload.
   useEffect(() => {
-    if (!profile.linkedPatientUid) return
-    return listenToPatientEvents(profile.linkedPatientUid, setEvents)
+    const patientUid = profile.linkedPatientUid
+    if (!patientUid) return
+    const unsubs = [
+      listenToPatientEvents(patientUid, setEvents),
+      listenToPatientAlerts(patientUid, setAlerts),
+      listenToPatientIncidents(patientUid, setIncidents),
+    ]
+    return () => unsubs.forEach((u) => u())
   }, [profile.linkedPatientUid])
+
+  const escalations = incidents.filter((i) => i.stage === 'escalated')
 
   const requestScript = async () => {
     setLoading(true)
@@ -71,6 +91,46 @@ export default function CaregiverDashboard({ uid, profile }: Props) {
             Sign out
           </button>
         </div>
+
+        {escalations.length > 0 && (
+          <div
+            className="rounded-2xl border border-red-500/50 bg-red-500/10 p-6"
+            role="alert"
+            aria-live="assertive"
+          >
+            <h2 className="mb-1 font-display text-lg text-red-200">Urgent — needs your attention</h2>
+            <p className="mb-4 text-xs text-red-200/70">
+              Flagged from their camera during a live session, after they were asked to stop.
+            </p>
+            <ul className="flex flex-col gap-4">
+              {escalations.slice(0, 3).map((incident) => (
+                <li key={incident.id} className="flex gap-4">
+                  {incident.frame && (
+                    <img
+                      src={incident.frame}
+                      alt="Snapshot captured when the incident was flagged"
+                      className="h-20 w-28 shrink-0 rounded-lg object-cover"
+                    />
+                  )}
+                  <p className="text-sm leading-relaxed text-ink">{incident.observation}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {alerts.length > 0 && (
+          <div className="rounded-2xl border border-line bg-card p-6">
+            <h2 className="mb-4 font-display text-lg">Latest alerts</h2>
+            <ul className="flex flex-col gap-3">
+              {alerts.slice(0, 3).map((alert) => (
+                <li key={alert.id} className="text-sm leading-relaxed text-ink-muted">
+                  {alert.script}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="rounded-2xl border border-line bg-card p-6">
           <h2 className="mb-4 font-display text-lg">Recent activity</h2>

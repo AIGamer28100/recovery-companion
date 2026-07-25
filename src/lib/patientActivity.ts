@@ -20,6 +20,51 @@ export function listenToPatientEvents(
   })
 }
 
+export interface PatientAlert {
+  id: string
+  script: string
+  triggeredBy: string
+  createdAt: unknown
+}
+
+export interface PatientIncident {
+  id: string
+  stage: 'intervening' | 'escalated'
+  observation: string
+  frame?: string
+  createdAt: unknown
+}
+
+/** Live stream of caregiver-facing alerts, newest first. */
+export function listenToPatientAlerts(
+  patientUid: string,
+  onChange: (alerts: PatientAlert[]) => void,
+): () => void {
+  const q = query(
+    collection(db, 'users', patientUid, 'alerts'),
+    orderBy('createdAt', 'desc'),
+    limit(10),
+  )
+  return onSnapshot(q, (snap) => {
+    onChange(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PatientAlert, 'id'>) })))
+  })
+}
+
+/** Live stream of relapse-risk incidents, newest first. */
+export function listenToPatientIncidents(
+  patientUid: string,
+  onChange: (incidents: PatientIncident[]) => void,
+): () => void {
+  const q = query(
+    collection(db, 'users', patientUid, 'incidents'),
+    orderBy('createdAt', 'desc'),
+    limit(10),
+  )
+  return onSnapshot(q, (snap) => {
+    onChange(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PatientIncident, 'id'>) })))
+  })
+}
+
 const TYPE_LABELS: Record<string, string> = {
   physical_tension: 'physical tension',
   sensory_overload: 'sensory overload',

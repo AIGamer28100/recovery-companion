@@ -4,7 +4,9 @@ import type { AudioConversationController, LiveSession } from 'firebase/ai'
 import { connectLiveSession, VISION_CHECK_PROMPT } from '../lib/geminiLive'
 import { teeSession } from '../lib/liveTee'
 import { VideoFrameStreamer } from '../lib/videoStream'
-import { logEvent } from '../lib/events'
+import { logEvent, logCaregiverAlert } from '../lib/events'
+import { recordRelapseIncident } from '../lib/incidents'
+import type { RelapseStage } from '../lib/safetyTools'
 
 type Status = 'idle' | 'connecting' | 'live' | 'error'
 
@@ -84,6 +86,7 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
   const [cameraOn, setCameraOn] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [lines, setLines] = useState<TranscriptLine[]>([])
+  const [incidentStage, setIncidentStage] = useState<RelapseStage | null>(null)
   const transcriptEndRef = useRef<HTMLDivElement | null>(null)
 
   const sessionRef = useRef<LiveSession | null>(null)
@@ -197,7 +200,37 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
         }
       })
 
-      controllerRef.current = await startAudioConversation(teed)
+      controllerRef.current = await startAudioConversation(teed, {
+        functionCallingHandler: async (functionCalls) => {
+          const call = functionCalls[0]
+          if (call?.name !== 'flagRelapseRisk') {
+            return { name: call?.name ?? 'unknown', response: { ok: false } }
+          }
+          const args = call.args as { stage?: RelapseStage; observation?: string }
+          const stage = args.stage === 'escalated' ? 'escalated' : 'intervening'
+          try {
+            await recordRelapseIncident(uid, stage, args.observation ?? '', videoRef.current)
+            if (stage === 'escalated') {
+              await logCaregiverAlert(uid, {
+                script: `Urgent: ${args.observation ?? 'possible substance use observed on camera'}`,
+                triggeredBy: 'relapse_risk',
+              })
+            }
+            setIncidentStage(stage)
+            return {
+              name: call.name,
+              response: {
+                ok: true,
+                stage,
+                caregiverNotified: stage === 'escalated',
+              },
+            }
+          } catch (err) {
+            console.error('Failed to record relapse incident', err)
+            return { name: call.name, response: { ok: false } }
+          }
+        },
+      })
 
       lastActivityRef.current = Date.now()
       startVisionCoach()
@@ -383,6 +416,39 @@ export default function LiveApp({ uid, onOpenFallback }: Props) {
 
         {/* Bottom stack: glow bar (camera mode), transcript, then controls. */}
         <div className="flex w-full flex-col items-center gap-5">
+          {/* Always visible when it happens — the person must know a snapshot was
+              taken and whether their caregiver was told. Never silent. */}
+          {incidentStage && (
+            <div
+              className={`w-full max-w-md rounded-2xl border px-4 py-3 text-left text-sm ${
+                incidentStage === 'escalated'
+                  ? 'border-red-500/50 bg-red-500/10 text-red-200'
+                  : 'border-ember/50 bg-ember-soft text-ink'
+              }`}
+              role="status"
+              aria-live="assertive"
+            >
+              {incidentStage === 'escalated' ? (
+                <>
+                  <strong className="font-semibold">Your caregiver has been notified.</strong>{' '}
+                  A snapshot and note were saved to your record.
+                </>
+              ) : (
+                <>
+                  <strong className="font-semibold">Snapshot saved to your record.</strong>{' '}
+                  Nobody else has been contacted.
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => setIncidentStage(null)}
+                className="ml-2 underline underline-offset-2 opacity-80 hover:opacity-100"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {/* With the camera on, the orb becomes an ambient strip of light so the
               companion still feels present without covering the view. */}
           {live && cameraOn && (

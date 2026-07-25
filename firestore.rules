@@ -92,9 +92,21 @@ service cloud.firestore {
              isRecentServerTimestamp('createdAt');
     }
 
+    function isValidIncident() {
+      return hasOnlyAllowedFields(['stage', 'observation', 'frame', 'createdAt']) &&
+             hasRequiredFields(['stage', 'observation', 'createdAt']) &&
+             request.resource.data.stage in ['intervening', 'escalated'] &&
+             request.resource.data.observation is string &&
+             request.resource.data.observation.size() <= 500 &&
+             // Evidence frame is a small base64 JPEG data URL; capped well under
+             // the 1 MB document limit.
+             isValidOptionalString('frame', 400000) &&
+             isRecentServerTimestamp('createdAt');
+    }
+
     function isValidAlert() {
       let allowedTriggers = ['physical_tension', 'sensory_overload', 'craving_spike',
-                              'elevated_stress', 'manual'];
+                              'elevated_stress', 'manual', 'relapse_risk'];
       return hasOnlyAllowedFields(['script', 'triggeredBy', 'createdAt']) &&
              hasRequiredFields(['script', 'triggeredBy', 'createdAt']) &&
              request.resource.data.script is string &&
@@ -154,6 +166,17 @@ service cloud.firestore {
       match /alerts/{alertId} {
         allow read: if isOwner(uid) || isLinkedCaregiver(uid);
         allow create: if isOwner(uid) && isValidAlert();
+        allow update, delete: if false;
+      }
+
+      // -------------------------------------------------------------
+      // users/{userId}/incidents/{incidentId} — relapse-risk record,
+      // append-only. Holds a snapshot, so it is deliberately readable ONLY by
+      // the person themselves and a caregiver they explicitly linked.
+      // -------------------------------------------------------------
+      match /incidents/{incidentId} {
+        allow read: if isOwner(uid) || isLinkedCaregiver(uid);
+        allow create: if isOwner(uid) && isValidIncident();
         allow update, delete: if false;
       }
     }

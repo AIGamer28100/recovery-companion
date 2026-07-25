@@ -20,7 +20,7 @@ export interface AppEvent {
 
 export interface CaregiverAlert {
   script: string
-  triggeredBy: InterventionKind | 'manual'
+  triggeredBy: InterventionKind | 'manual' | 'relapse_risk'
   createdAt: unknown
 }
 
