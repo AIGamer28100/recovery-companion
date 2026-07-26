@@ -1,4 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Live call audio pipeline (DESIGN.md §3) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <!-- Foreground service: keeps the mic + Live API socket alive through
+         screen lock and backgrounding (§3.9). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <!-- Required on Android 13+ to show the persistent "still on the line"
+         notification the foreground service depends on. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <application
         android:label="recovery_companion"
         android:name="${applicationName}"
@@ -30,6 +41,18 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- DESIGN.md §3.9: survives screen lock/backgrounding during a live
+             call. `stopWithTask="false"` so swiping the app away doesn't
+             silently kill an active call out from under the person using
+             it — ending the call is a deliberate action (the notification's
+             "End call" button, or the in-app control), not an accidental
+             task swipe. -->
+        <service
+            android:name=".foreground.CallForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"
+            android:stopWithTask="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

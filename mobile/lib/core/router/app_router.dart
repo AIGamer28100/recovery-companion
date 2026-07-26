@@ -7,6 +7,7 @@ import '../../features/auth/domain/app_user.dart';
 import '../../features/auth/presentation/sign_in_screen.dart';
 import '../../features/auth/presentation/splash_screen.dart';
 import '../../features/home/presentation/home_screen.dart';
+import '../../features/live_session/presentation/live_session_debug_harness_screen.dart';
 import '../../features/onboarding/presentation/onboarding_screen.dart';
 import '../../features/profile/data/profile_repository.dart';
 import '../../features/profile/domain/user_profile.dart';
@@ -95,6 +96,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: _signInPath, builder: (context, state) => const SignInScreen()),
       GoRoute(path: _onboardingPath, builder: (context, state) => const OnboardingScreen()),
       GoRoute(path: _homePath, builder: (context, state) => const HomeScreen()),
+      // Scratch harness for manually exercising the M2 audio pipeline
+      // (mic -> Live session -> playback, barge-in, focus handling) —
+      // deliberately not linked from anywhere in the real app's navigation,
+      // and compiled out of release builds entirely.
+      if (kDebugMode)
+        GoRoute(
+          path: '/debug/live-session',
+          builder: (context, state) => const LiveSessionDebugHarnessScreen(),
+        ),
     ],
   );
 });
