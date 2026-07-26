@@ -13,7 +13,7 @@ export default function Login() {
       <div className="ember-field" />
       <div className="relative z-10 flex flex-col items-center gap-7">
         <h1 className="font-display text-4xl font-medium tracking-tight text-ink">
-          Recovery Companion
+          Soter Recovery
         </h1>
         <p className="max-w-[22rem] text-[15px] leading-relaxed text-ink-muted">
           A companion for moments that need one tap, not a form. No typing, no forms —

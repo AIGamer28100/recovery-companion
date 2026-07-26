@@ -65,7 +65,7 @@ export default function LiveApp({ uid, profile, onOpenFallback }: Props) {
       <div className="relative z-10 flex flex-1 flex-col items-center px-6 pb-6 pt-12 text-center">
         {/* Header */}
         <div className="flex flex-col items-center gap-3">
-          <h1 className="font-display text-2xl font-medium sm:text-3xl">Recovery Companion</h1>
+          <h1 className="font-display text-2xl font-medium sm:text-3xl">Soter Recovery</h1>
           <p className="max-w-xs text-sm leading-relaxed text-ink-muted">
             {status === 'idle' && 'Tap to start talking. No typing, no forms — just talk.'}
             {connecting && 'Opening the line…'}

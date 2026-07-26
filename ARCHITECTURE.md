@@ -1,6 +1,6 @@
 # Architecture
 
-Recovery Companion is two front-ends over one Firebase backend, split by who
+Soter Recovery is two front-ends over one Firebase backend, split by who
 uses them and where they are when they use it.
 
 ```

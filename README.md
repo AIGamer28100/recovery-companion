@@ -1,4 +1,4 @@
-# Recovery Companion
+# Soter Recovery
 
 A real-time voice companion for people navigating substance use urges, and for the
 caregivers supporting them — modeled on the Google Gemini Live app: a live spoken
@@ -7,7 +7,7 @@ by design, for the moments when cognitive load is highest and typing is the last
 someone can manage.
 
 **Live app:** https://recovery-companion-hack.web.app
-**Repo:** https://github.com/AIGamer28100/recovery-companion
+**Repo:** https://github.com/AIGamer28100/soter-recovery
 
 **Sign in with any Google account — no allowlist, no test credentials to request.**
 On first sign-in you pick a role, which determines everything you see next.

@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "recovery-companion-hack"
-  }
+  },
+  "targets": {
+    "recovery-companion-hack": {
+      "hosting": {
+        "soter": [
+          "soter-recovery"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
