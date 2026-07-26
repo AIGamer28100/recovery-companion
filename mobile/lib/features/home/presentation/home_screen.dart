@@ -22,7 +22,7 @@ class HomeScreen extends ConsumerWidget {
     };
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Recovery Companion')),
+      appBar: AppBar(title: const Text('Soter Recovery')),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24),

@@ -9,7 +9,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:recovery_companion/features/live_session/data/live_session_tee.dart';
+import 'package:soter_recovery/features/live_session/data/live_session_tee.dart';
 
 class FakeMessage {
   const FakeMessage(this.seq, this.payload);

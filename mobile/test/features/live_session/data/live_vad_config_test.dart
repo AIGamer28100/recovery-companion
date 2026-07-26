@@ -5,7 +5,7 @@
 // milestone (firebase_ai 3.14.1 has no realtimeInputConfig passthrough).
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:recovery_companion/features/live_session/data/live_vad_config.dart';
+import 'package:soter_recovery/features/live_session/data/live_vad_config.dart';
 
 void main() {
   test('matches the exact values ported from liveVad.ts', () {

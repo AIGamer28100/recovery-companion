@@ -1,4 +1,4 @@
-# Recovery Companion — Android App Design Document
+# Soter Recovery — Android App Design Document
 
 Status: planning document, no application code written against it yet.
 Scope: `mobile/` (Flutter, Android only). Backend, data model, and security
@@ -49,7 +49,7 @@ dynamic one:
   the important thing") instead of becoming ambient decoration
 
 Typography: bundle **Fraunces** (variable font, ship the `.ttf`/`.otf` in
-`assets/fonts/`) for display text (headline on Home, "Recovery Companion"
+`assets/fonts/`) for display text (headline on Home, "Soter Recovery"
 wordmark) and the platform's default (Roboto Flex via Material 3's type
 scale) for body/UI text. Do not set Fraunces on body copy — it's a display
 face, and setting it small defeats the "plain language, plain type" tone the
@@ -152,7 +152,7 @@ dissociating. Design constraints, in priority order:
 │ ≡                              ●LIVE │  ← menu (56dp target, top-left,
 │                                       │    reachable by thumb on large       
 │                                       │    phones held one-handed low)       
-│         Recovery Companion           │  ← Fraunces, quiet, not shouting
+│           Soter Recovery            │  ← Fraunces, quiet, not shouting
 │                                       │
 │      "I'm listening. Cut in          │  ← current-state line, changes with
 │         any time."                   │    status (idle/connecting/live/     
@@ -679,7 +679,7 @@ Concrete requirements:
   build and test against a real Android 14/15 device, not just the emulator,
   before trusting this (§9, R2).
 - Persistent notification (required by the OS for any foreground service)
-  written in-voice: "Recovery Companion — still on the line" with a direct
+  written in-voice: "Soter Recovery — still on the line" with a direct
   tap-back-into-the-call action and an end-call action, so the person can
   manage the call from the notification shade too.
 - On screen lock specifically: mic + socket continue via the foreground

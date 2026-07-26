@@ -3,7 +3,7 @@
 // per DESIGN.md §2.5.
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:recovery_companion/core/theme/app_theme.dart';
+import 'package:soter_recovery/core/theme/app_theme.dart';
 
 void main() {
   test('dark theme uses the ember accent as primary', () {

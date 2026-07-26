@@ -73,7 +73,7 @@ class CallForegroundService : Service() {
                 "Live call",
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Shown while you're on a live call with Recovery Companion."
+                description = "Shown while you're on a live call with Soter Recovery."
                 setShowBadge(false)
             }
             manager.createNotificationChannel(channel)
@@ -104,7 +104,7 @@ class CallForegroundService : Service() {
         }
 
         return builder
-            .setContentTitle("Recovery Companion — still on the line")
+            .setContentTitle("Soter Recovery — still on the line")
             .setContentText("Tap to return to the call.")
             .setSmallIcon(applicationInfo.icon)
             .setContentIntent(openPendingIntent)

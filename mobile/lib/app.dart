@@ -12,7 +12,7 @@ class RecoveryCompanionApp extends ConsumerWidget {
     final router = ref.watch(routerProvider);
 
     return MaterialApp.router(
-      title: 'Recovery Companion',
+      title: 'Soter Recovery',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,

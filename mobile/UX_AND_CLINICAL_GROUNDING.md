@@ -1,4 +1,4 @@
-# Recovery Companion — UX & Clinical Grounding
+# Soter Recovery — UX & Clinical Grounding
 
 This document refines and extends `mobile/DESIGN.md`. It does not change the
 tech stack, architecture, folder structure, security model, or anything in

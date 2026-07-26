@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:recovery_companion/platform/audio/energy_vad.dart';
+import 'package:soter_recovery/platform/audio/energy_vad.dart';
 
 Uint8List _pcm16Of(int sampleValue, int sampleCount) {
   final bytes = ByteData(sampleCount * 2);
