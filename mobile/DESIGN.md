@@ -970,6 +970,249 @@ or a crisis line"). Two gaps worth naming:
 5. The Firestore offline-cache exposure of evidence photos (§5.3) doesn't
    have a clean fix within current SDK capabilities as far as this review
    determined — flagged rather than papered over.
+6. §5.6's account-deletion design cannot automatically remove the empty
+   Firebase Auth record on Spark (no Admin SDK/Cloud Function) — a small,
+   disclosed residual gap, not silently left unmentioned.
+
+**Compliance disclaimer, stated once here rather than repeated per
+subsection:** §5.6 below is a good-faith engineering interpretation of GDPR
+Articles 17 (erasure) and 20 (portability), not legal advice. Get real legal
+review before relying on this design as a compliance claim to real users —
+particularly the interaction between Article 17(3)'s exemptions and this
+product's own anti-tampering rationale for relapse evidence, which is a
+genuine tension, not a solved one (see §5.6.1).
+
+### 5.6 Account deletion (right to erasure) and data export (right to portability)
+
+This section was not commissioned by the original design brief and is a
+later addition — added deliberately at design time, before any Settings
+screen exists, rather than retrofitted after ad hoc deletion code has
+already shipped somewhere.
+
+#### 5.6.1 Reconciling with §5.2's immutability decision
+
+§5.2 decided that a single incident can never be deleted by anyone, ever —
+that decision **stands, unchanged, for the lifetime of an active account**.
+Full account deletion is not a loophole around it; it is a different,
+much larger, formally-gated action, and the two are meant to coexist like
+this:
+
+- §5.2's concern was a patient (or a compromised session) quietly erasing
+  *one inconvenient incident* while the account and the caregiver
+  relationship stay active — that would let evidence disappear while the
+  reason it existed (an active relationship built on the promise that it's
+  visible) is unchanged. Still rejected, unconditionally.
+- Closing the account ends that relationship *in its entirety*. There is no
+  remaining relationship for isolated evidence to selectively survive
+  under, and GDPR Article 17 gives the patient a real right to ask for all
+  of it to go. Treating "delete everything, formally, with a 30-day
+  cooling-off period" as categorically different from "quietly delete this
+  one photo, right now, no one else asked" is the load-bearing distinction
+  here — not a contradiction of §5.2, an application of it.
+- The security-rules design below enforces this distinction mechanically,
+  not just in prose: the narrow update permission that lets a client touch
+  an otherwise-immutable document's expiry is only granted **after** the
+  account-wide deletion has been formally requested (checked via a `get()`
+  on the parent profile doc), and it can only ever set the expiry to the
+  *account's* scheduled date — never an arbitrary earlier date on a single
+  document in isolation. There is still no way to delete just one incident.
+
+#### 5.6.2 Why Firestore TTL, not a timer anyone has to run
+
+The Spark plan has no Cloud Functions, so there is no server-side cron to
+"come back in 30 days and actually delete this." **Firestore's native TTL
+(Time-to-Live) policies are the mechanism** — a per-collection-group policy
+on a timestamp field that the Firestore backend itself sweeps and deletes
+from, without any app code, Cloud Function, or the client needing to be
+online when it fires. It is a free, Spark-plan feature, and — importantly —
+**TTL deletions are performed by the Firestore backend outside of Security
+Rules evaluation**, so no `allow delete` needs to be granted to any client
+at all. The client's only job is to write the correct expiry date onto the
+right documents; the actual deletion is something no client, including the
+account owner's own, ever has permission to trigger directly.
+
+This composes with M7's separate, already-planned 180-day general-retention
+TTL (§5.2) on the **same `expiresAt` field**: general retention sets
+`expiresAt = createdAt + 180d` at write time as the default; requesting
+account deletion simply **overwrites** that field to the earlier
+account-wide date on every existing document. Whichever value is smaller
+wins, naturally, with no field-name conflict and no dual bookkeeping.
+**Dependency, not just a suggestion for sequencing:** this feature requires
+M7's `expiresAt`-at-creation-time change to already be live (every event/
+alert/incident/session must already be written with an `expiresAt` field)
+before deletion cascade logic has anything reliable to overwrite — build
+order matters here.
+
+TTL is not instant: Google documents Firestore TTL deletions as typically
+completing **within 24 hours of expiry, not to the second**. State this
+honestly in the UI copy below ("within about 31 days," not "on day 30 at
+midnight") — promising precision TTL doesn't provide is its own small
+trust cost, and an easy one to avoid.
+
+#### 5.6.3 The flow
+
+1. **Settings → Data & Privacy → "Delete my account."** Explains, in the
+   app's plain-language register, what happens and when: *"This deletes
+   everything — your check-ins, conversations, and any saved photos —
+   within about 31 days. You can change your mind and cancel any time
+   during that window just by signing back in. After that, it's gone for
+   good, including from your caregiver's view."*
+2. **Re-authentication required** (`reauthenticateWithProvider` via Google
+   Sign-In) before the request is accepted — this is a Firebase requirement
+   for sensitive Auth operations on an account whose sign-in is not
+   freshly established, and it's the right friction for an irreversible-
+   after-the-window action regardless.
+3. **On confirm, the client:**
+   - Writes `deletionRequestedAt: serverTimestamp()` and
+     `expiresAt: deletionRequestedAt + 30 days` onto the profile doc.
+   - Cascades `expiresAt` (the same account-wide date, not independently
+     computed per document) onto every existing document across `events`,
+     `alerts`, `incidents`, and `sessions`, via batched writes (Firestore's
+     500-ops-per-batch limit means a long-time user's history may need
+     several batches — chunk explicitly, don't assume one batch suffices).
+   - If the account is a **caregiver**: also `arrayRemove`s their own email
+     from any patient's `linkedCaregiverEmails` immediately (reusing the
+     existing `findLinkedPatient` lookup) — cheap, not tamper-sensitive in
+     the same way, and there is no reason to keep an about-to-be-deleted
+     caregiver actively linked for 30 more days. If they cancel within the
+     window, re-adding the email is a normal, un-gated part of undoing the
+     request (see cancel, below) — no special-casing needed there.
+   - The account is **not** signed out. Signing out would make "sign back
+     in to cancel" the same action as "sign back in to check if it worked,"
+     which is a confusing UX collision. Instead:
+4. **A persistent, unmissable "Scheduled for deletion on [date] — Cancel"
+   banner** replaces normal Home/navigation for the remainder of the
+   session and on every subsequent sign-in, checked via the profile doc's
+   `deletionRequestedAt` field as part of the existing `go_router` redirect
+   guard (§1.2/§2.2) — the same mechanism that already gates Sign-in vs
+   Home, extended with one more state. The rest of the app (Live Call, tap-
+   only support, Help now) stays reachable underneath it; a pending
+   deletion should never block someone from reaching support in the
+   meantime.
+5. **Cancel**, at any point before expiry: clears `deletionRequestedAt` and
+   `expiresAt` from the profile doc and from every subcollection document
+   touched in step 3 (a symmetric cascade, same batching), restoring each
+   document's `expiresAt` to its original `createdAt + 180d` general-
+   retention value rather than leaving it null (leaving it null would
+   silently opt that document out of the M7 general-retention policy
+   forever, which isn't what "I changed my mind about deleting my account"
+   should mean).
+6. **Within ~31 days, unattended:** Firestore TTL deletes the profile doc
+   and every subcollection document whose `expiresAt` has passed. No app
+   code executes. If the person never opens the app again, the data is
+   still gone — which is the entire point of a background TTL mechanism
+   over a client-triggered one.
+
+#### 5.6.4 The Firebase Auth record — a named, not hidden, gap
+
+Firestore TTL can erase Firestore *data*. It **cannot** delete the Firebase
+Authentication user object itself (uid, email, display name, photo URL —
+sourced from Google Sign-In, no app content) — that requires the Admin SDK,
+i.e. a Cloud Function, unavailable on Spark. Two options were weighed:
+
+- **Delete the Auth user immediately at request time.** Rejected: it breaks
+  "sign back in to cancel" outright, since Firebase treats a subsequent
+  Google sign-in as a brand-new uid with no path back to the old, still-
+  mid-cooling-period profile document.
+- **Leave the Auth record alone through the window (recommended, and what
+  the flow above assumes).** Consequence, stated plainly rather than
+  solved: if someone never signs in again after their data is erased, an
+  empty Auth entry — containing nothing beyond what Google's own sign-in
+  already independently holds for them — persists with no automated
+  cleanup path on Spark. If they *do* sign in again after expiry, the app
+  finds no profile doc and simply routes them to onboarding as a new user —
+  which requires no special-case code at all, since "no profile" and "new
+  user" are already the same code path.
+
+Manual, periodic Admin-console cleanup of Auth users with no matching
+Firestore profile is the only closing move available on Spark; note it as
+an occasional operational task, not something to build.
+
+#### 5.6.5 Data export (right to portability)
+
+**Settings → Data & Privacy → "Download everything we have about you."**
+Already anticipated in §5.2's original recommendation; specified concretely
+here:
+
+- Client-side only, no backend needed: read the profile doc plus every
+  document the account can already read under its own ownership per
+  `firestore.rules` (i.e., export scope mirrors read-access scope exactly —
+  if a rule change ever grants a new readable field, export picks it up
+  automatically rather than needing a parallel list maintained by hand).
+- Bundle into a single JSON file, human-readable field names, grouped by
+  collection. Use `share_plus` (**new dependency**, not yet in
+  `pubspec.yaml`) rather than a direct filesystem write — Android's scoped
+  storage makes writing straight to Downloads unreliable across OS
+  versions; routing through the system share sheet lets the person save,
+  email, or send the file wherever they want without the app needing
+  storage permissions it otherwise has no reason to hold.
+- Available regardless of whether deletion is pending — exporting first,
+  then deleting, is exactly the flow GDPR portability exists to support,
+  and the two features should visibly sit next to each other in the UI for
+  that reason.
+- **Caregiver accounts** get the same entry point; their export is just
+  smaller (their own profile doc — they own no events/alerts/incidents/
+  sessions subcollections of their own).
+- **Scope note for `src/` (the web caregiver dashboard):** it currently has
+  no Settings/Account area at all. A caregiver is a data subject too and
+  has the same Article 17/20 rights over their own profile doc. Out of
+  scope to build in this pass — flagged so it isn't forgotten, not silently
+  dropped — but the underlying mechanism (rules below, export-scope-mirrors-
+  read-scope) is already role-agnostic and reusable there without redesign
+  when that work happens.
+
+#### 5.6.6 Security rules — drafted here, not yet deployed
+
+Rules changes are drafted now for review, but **not applied to the live
+`firestore.rules` yet** — they have no caller until Settings exists (M7),
+and a shared, already-hardened, two-app-consumed rules file should change
+alongside the feature that exercises it, with tests, not speculatively.
+
+```
+// Extends isValidOwnerProfileUpdate to allow initiating/cancelling deletion,
+// in addition to the existing emergencyContact/linkedCaregiverEmails edits.
+function isValidDeletionRequest() {
+  let before = resource.data;
+  let after = request.resource.data;
+  return after.diff(before).affectedKeys().hasOnly(['deletionRequestedAt', 'expiresAt']) &&
+    isRecentServerTimestamp('deletionRequestedAt') &&
+    after.expiresAt == after.deletionRequestedAt + duration.value(30, 'd');
+}
+
+function isValidDeletionCancel() {
+  let before = resource.data;
+  let after = request.resource.data;
+  return after.diff(before).affectedKeys().hasOnly(['deletionRequestedAt', 'expiresAt']) &&
+    !('deletionRequestedAt' in after) &&
+    // Cancelling restores general 180-day retention, it doesn't opt out of
+    // TTL entirely — see §5.6.3 step 5.
+    ('expiresAt' in after ? after.expiresAt == before.createdAt + duration.value(180, 'd') : true);
+}
+
+// New: lets a client set ONLY expiresAt on an otherwise-immutable document,
+// and only in lockstep with the account-wide deletion date on its own
+// parent profile — never an independently-chosen date. This is what makes
+// §5.6.1's distinction (account deletion vs. single-incident deletion)
+// real rather than aspirational: without the get() check below, this would
+// silently reopen the exact loophole §5.2 closed.
+function isValidExpiryCascade(uid) {
+  let profile = get(/databases/$(database)/documents/users/$(uid)).data;
+  return isOwner(uid) &&
+    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['expiresAt']) &&
+    (
+      // Cascading a deletion request: must match the profile's own schedule exactly.
+      ('deletionRequestedAt' in profile && request.resource.data.expiresAt == profile.expiresAt) ||
+      // Cascading a cancellation: back to this specific document's own general retention.
+      (!('deletionRequestedAt' in profile) &&
+       request.resource.data.expiresAt == resource.data.createdAt + duration.value(180, 'd'))
+    );
+}
+```
+
+Applied as `allow update: if isValidEvent-style-create... || isValidExpiryCascade(uid);`
+alongside the existing `allow create` on each of `events`, `alerts`,
+`incidents`, and `sessions` — `allow delete` stays `false` everywhere,
+unchanged; TTL never needs it, per §5.6.2.
 
 ---
 
@@ -1128,10 +1371,18 @@ physical Android phones (not emulator-only) spanning at least one Android
 **M7 — Security & privacy hardening.** `FLAG_SECURE` on the two flagged
 screens, Firebase App Check + Play Integrity registration, `local_auth`
 biometric gate defaulting on after first caregiver link, Firestore TTL
-policies on `incidents`/`sessions`/`events`, consent copy from §5.1 built
-and reviewed. *DoD*: every item in §5.5's "ethically thin" list has either
-been resolved or has an explicit, documented, deliberate decision not to
-resolve it for v1 — silence is not an acceptable outcome for that list.
+policies on `incidents`/`sessions`/`events`/`users` with `expiresAt`
+written at creation time (§5.2), consent copy from §5.1 built and reviewed,
+**account deletion and data export (§5.6) built end to end**: Settings UI,
+the drafted rules changes deployed alongside it (not before), the batched
+cascade-write and cancel paths, and the `share_plus` export flow. *DoD*:
+every item in §5.5's "ethically thin" list has either been resolved or has
+an explicit, documented, deliberate decision not to resolve it for v1 —
+silence is not an acceptable outcome for that list; a scripted test account
+can request deletion, cancel it, request it again, and be confirmed (via
+direct Firestore inspection, since ~31-day TTL isn't practical to wait out
+in CI) to have `expiresAt` correctly cascaded across every one of its own
+documents and nowhere it shouldn't be.
 
 **M8 — Accessibility & polish.** TalkBack audit of the full crisis flow,
 reduced-motion verification, golden tests across text-scale/theme/TalkBack
@@ -1238,3 +1489,15 @@ the design scope of this document.
     *Mitigation*: cut from v1 entirely (§3.8, §8) rather than shipped in an
     unreliable state — the highest-leverage mitigation for this one is
     simply not building it yet.
+
+11. **The account-deletion cascade (§5.6.3) partially fails mid-batch** —
+    network drops after some documents have `expiresAt` rewritten to the
+    deletion date and others don't, leaving an account half-scheduled: some
+    data erased on time, some silently retained past when the person was
+    told everything would be gone. *Mitigation*: design the cascade to be
+    **idempotent and safely resumable** rather than one-shot — each batch
+    only needs to touch documents whose `expiresAt` doesn't already match
+    the target date, so re-running the same cascade after a partial failure
+    (on next app open, or via a retry button on the pending-deletion banner
+    itself) is cheap and correct without special-casing "resume." Verify
+    this specific resume behavior in M7's test pass, not just the happy path.
