@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "902628596067-jk3kpcoo99uig8u01mhfbp1h97c5ttv9.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.recoverycompanion.recovery_companion",
+            "certificate_hash": "bafb52582272c5e4e2355428d797ced1583bc823"
+          }
+        },
+        {
           "client_id": "902628596067-jvsvepempv0pfj5sst4mjov5hepr9idi.apps.googleusercontent.com",
           "client_type": 3
         }
