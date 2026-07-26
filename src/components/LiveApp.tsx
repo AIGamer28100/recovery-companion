@@ -102,8 +102,10 @@ export default function LiveApp({ uid, profile, onOpenFallback }: Props) {
             >
               {incidentStage === 'escalated' ? (
                 <>
-                  <strong className="font-semibold">Your caregiver has been notified.</strong>{' '}
-                  A snapshot and note were saved to your record.
+                  <strong className="font-semibold">
+                    A note was saved for your caregiver to see next time they open their dashboard.
+                  </strong>{' '}
+                  A snapshot was saved to your record too.
                 </>
               ) : (
                 <>
