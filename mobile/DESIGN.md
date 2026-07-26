@@ -847,29 +847,32 @@ recovery has zero ability to ever reclaim narrative control over a captured
 moment of relapse, permanently. That tension is real and worth stating
 plainly rather than resolving it by silent omission.
 
-Recommendations, concrete and scoped to what's actually buildable on Spark
-(no Cloud Functions):
+**Decided (product owner, [date of this review]): stay fully immutable.**
+No delete path, for anyone, ever — including the patient, including their
+own relapse-evidence photo. The self-delete-with-tombstone option below was
+considered and explicitly rejected: anti-tampering integrity of the
+caregiver-facing record wins over patient-side erasure. This is a conscious
+call, not an oversight — do not silently add a delete path later without
+revisiting this decision explicitly.
+
+What ships instead, scoped to what's buildable on Spark (no Cloud Functions):
 
 - **Firestore TTL policies** (a native Firestore feature, not a Cloud
   Function, available on the free/Spark tier) on `incidents`, `sessions`,
-  and `events` — add a `expiresAt` timestamp field (e.g. `createdAt + 180
-  days`) at write time and configure a TTL policy on that field. This gives
-  automatic, defensible retention limits without touching the "append-only,
-  no client-initiated delete" integrity property.
-- **A narrow, explicit self-delete path for the *patient only*, on their own
-  incidents**, added deliberately rather than left absent by default: relax
-  `incidents`' rule to allow `delete` when `isOwner(uid)`, but pair it with
-  writing a tombstone/audit trail (a lightweight `deletedIncidentsCount` or
-  similar on the profile doc, incrementing) so a caregiver relationship
-  isn't silently undermined without any trace that *something* was removed —
-  this is a genuine product/ethics trade-off, not a pure engineering one,
-  and should be a conscious decision by whoever owns the product, not an
-  implementer's unilateral call. Flagging it here so it's a decision, not a
-  default.
+  and `events` — add an `expiresAt` timestamp field (e.g. `createdAt + 180
+  days`) at write time and configure a TTL policy on that field. This is the
+  **only** retention control in v1: automatic, defensible, time-bounded
+  expiry, without touching the append-only integrity property. **M7 item.**
 - **A data-export path** (Settings > Data & privacy: "Download everything
   we have about you") — straightforward client-side Firestore reads
   bundled into a shareable file, no backend needed, and a meaningful
-  trust-building feature independent of the deletion question above.
+  trust-building feature independent of the immutability decision above.
+
+*(Rejected option, recorded for context: a narrow self-delete path for the
+patient on their own incidents, paired with a tombstone/audit counter on the
+profile doc so a caregiver relationship isn't silently undermined without
+trace. Revisit only via an explicit, conscious product decision — not a
+future implementer's unilateral call.)*
 
 ### 5.3 Android-specific concerns
 
@@ -946,8 +949,10 @@ or a crisis line"). Two gaps worth naming:
 
 ### 5.5 Where this design is still ethically thin — stated plainly
 
-1. No deletion path for the patient's own relapse evidence today (§5.2) —
-   proposed fix is a genuine product decision, not yet made.
+1. ~~No deletion path for the patient's own relapse evidence today~~ —
+   **decided (§5.2): stays fully immutable, TTL-only retention.** No longer
+   an open item; recorded here so the decision and its rationale stay visible
+   rather than looking like an oversight to a future reader.
 2. Self-harm/suicide handling has no deterministic backstop in the current
    (web-inherited) design (§5.4) — proposed fix above, not yet built
    anywhere.
@@ -1160,12 +1165,9 @@ the design scope of this document.
 - **Caregiver-initiated push notifications / any Cloud-Functions-dependent
   feature.** Out of scope while on the Spark plan by hard constraint, not a
   choice being made here.
-- **The patient-initiated incident-deletion path (§5.2)'s exact rule
-  change.** The TTL-policy half of that recommendation is in-scope for M7;
-  the client-delete-with-tombstone half is flagged as a product decision
-  that should be made consciously by whoever owns this product, not defaulted
-  into v1 by an implementer — recommend it be decided before M7 closes, but
-  it's fair to cut to v1.1 if that conversation hasn't happened yet.
+- **Patient-initiated incident deletion.** Decided against, not deferred
+  (§5.2) — incidents stay fully immutable. Only the TTL-policy half ships,
+  in M7.
 
 ---
 
@@ -1191,11 +1193,15 @@ the design scope of this document.
    fallback rather than an undefined failure; tested across the device
    matrix in M6, not assumed from one test phone.
 
-4. **No deletion path for relapse evidence** undermines the consent story in
-   §5.1 and could constitute a real trust/ethical failure if surfaced to a
-   user who asks "can you delete that photo of me." *Mitigation*: resolved
-   as a conscious decision no later than M7, per §5.5 — not allowed to ship
-   silently unresolved.
+4. **No deletion path for relapse evidence, by decision (§5.2).** A patient
+   who asks "can you delete that photo of me" will get "no" — that answer is
+   now deliberate, not an oversight, but it's still a real trust cost that
+   the consent copy in §5.1 must not undersell. *Mitigation*: the §5.1
+   consent script already says "even if you don't want it to right then" —
+   keep that phrasing intact through implementation; it's doing the work of
+   setting this expectation honestly, in advance, rather than the app
+   discovering the limitation in the moment someone asks. TTL policy (M7)
+   remains the only retention control.
 
 5. **Self-harm/suicide cues handled only by model judgment, no deterministic
    backstop.** A missed cue here is categorically worse than most other
