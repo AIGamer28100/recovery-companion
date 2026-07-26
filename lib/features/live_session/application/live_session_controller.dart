@@ -4,7 +4,9 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../platform/audio/audio_pipeline.dart';
+import '../../auth/data/auth_repository.dart';
 import '../data/gemini_live_repository.dart';
+import '../data/session_memory_repository.dart';
 import '../domain/live_call_event.dart';
 import '../domain/live_session_status.dart';
 import '../domain/relapse_stage.dart';
@@ -26,6 +28,7 @@ class LiveSessionState {
     this.incidentStage,
     this.echoCancellationAvailability = EchoCancellationAvailability.unknown,
     this.errorMessage,
+    this.isModelSpeaking = false,
   });
 
   final LiveSessionStatus status;
@@ -34,12 +37,21 @@ class LiveSessionState {
   final EchoCancellationAvailability echoCancellationAvailability;
   final String? errorMessage;
 
+  /// Drives the Live Call screen's orb between its "listening" and
+  /// "speaking" shapes (DESIGN.md §1.3/§1.4, amendments §A.5.1/§A.5.3): true
+  /// while model audio is actively streaming, false the instant a barge-in
+  /// (`LiveInterrupted`) or turn-complete signal arrives — set in the same
+  /// state update that triggers `flushPlayback()`, so the visible shift is
+  /// same-frame with the audio cut, not just audibly present.
+  final bool isModelSpeaking;
+
   LiveSessionState copyWith({
     LiveSessionStatus? status,
     List<TranscriptLine>? lines,
     Object? incidentStage = _unset,
     EchoCancellationAvailability? echoCancellationAvailability,
     Object? errorMessage = _unset,
+    bool? isModelSpeaking,
   }) {
     return LiveSessionState(
       status: status ?? this.status,
@@ -50,6 +62,7 @@ class LiveSessionState {
       echoCancellationAvailability:
           echoCancellationAvailability ?? this.echoCancellationAvailability,
       errorMessage: identical(errorMessage, _unset) ? this.errorMessage : errorMessage as String?,
+      isModelSpeaking: isModelSpeaking ?? this.isModelSpeaking,
     );
   }
 }
@@ -67,13 +80,16 @@ class LiveSessionController extends Notifier<LiveSessionState> {
   LiveSessionController({
     LiveSessionRepository? repository,
     AudioPipeline? audioPipeline,
+    SessionMemoryRepository? sessionMemory,
     FlagRelapseRiskCallback? onFlagRelapseRisk,
   })  : _repository = repository,
         _audioPipeline = audioPipeline,
+        _sessionMemory = sessionMemory,
         _onFlagRelapseRisk = onFlagRelapseRisk;
 
   LiveSessionRepository? _repository;
   AudioPipeline? _audioPipeline;
+  SessionMemoryRepository? _sessionMemory;
   final FlagRelapseRiskCallback? _onFlagRelapseRisk;
 
   LiveSessionHandle? _handle;
@@ -88,6 +104,8 @@ class LiveSessionController extends Notifier<LiveSessionState> {
 
   LiveSessionRepository get _repo => _repository ??= FirebaseLiveSessionRepository();
   AudioPipeline get _pipeline => _audioPipeline ??= AudioPipeline();
+  SessionMemoryRepository get _memory =>
+      _sessionMemory ??= FirestoreSessionMemoryRepository();
 
   @override
   LiveSessionState build() {
@@ -128,6 +146,22 @@ class LiveSessionController extends Notifier<LiveSessionState> {
       _pipelineEventsSub = _pipeline.events.listen(_onPipelineEvent);
       _eventsSub = handle.events.listen(_onLiveCallEvent);
 
+      // Opens every call as a continuation — greets them, states the time of
+      // day, and (if one exists) recaps the last conversation — sent as a
+      // silent director note before the user has said anything. Mirrors the
+      // exact `buildContinuityBriefing` → `sendTextRealtime` sequence in
+      // `useLiveSession.ts`'s `startCall`. Best-effort: a missing briefing
+      // must never block the call from going live.
+      final uid = ref.read(authRepositoryProvider).currentUser?.uid;
+      if (uid != null) {
+        try {
+          final briefing = await _memory.buildContinuityBriefing(uid);
+          if (!isStale()) unawaited(handle.sendTextRealtime(briefing));
+        } catch (_) {
+          // Proceed without a briefing rather than fail the call.
+        }
+      }
+
       state = state.copyWith(status: LiveSessionStatus.live);
     } catch (_) {
       await _teardown();
@@ -140,12 +174,31 @@ class LiveSessionController extends Notifier<LiveSessionState> {
 
   Future<void> endCall() async {
     _generation++;
+    await _saveTranscript();
     await _teardown();
     state = const LiveSessionState();
   }
 
   void dismissIncident() {
     state = state.copyWith(incidentStage: null);
+  }
+
+  /// Persists the accumulated transcript so the next call can open as a
+  /// continuation. Mirrors `useLiveSession.ts`'s `endCall`: built from
+  /// `state.lines` with the speaker labels swapped ("Them" for the user,
+  /// "You" for the companion) because this recap is fed back to the model
+  /// itself in a future session, not shown to the person.
+  Future<void> _saveTranscript() async {
+    final uid = ref.read(authRepositoryProvider).currentUser?.uid;
+    if (uid == null) return;
+    final transcript =
+        state.lines.map((l) => '${l.fromUser ? 'Them' : 'You'}: ${l.text}').join('\n');
+    try {
+      await _memory.saveSessionTranscript(uid, transcript);
+    } catch (_) {
+      // Best-effort, mirrors the web app's catch-and-warn — a failed save
+      // must never block ending the call.
+    }
   }
 
   Future<void> _teardown() async {
@@ -175,11 +228,16 @@ class LiveSessionController extends Notifier<LiveSessionState> {
         _appendTranscript(event);
       case LiveAudioChunk(:final pcm16):
         _pipeline.notifyModelSpeaking(true);
+        if (!state.isModelSpeaking) state = state.copyWith(isModelSpeaking: true);
         unawaited(_pipeline.playInboundChunk(Uint8List.fromList(pcm16)));
       case LiveInterrupted():
+        // Same state update that triggers the flush — see `isModelSpeaking`'s
+        // doc comment for why order matters here (§A.5.3's same-frame rule).
+        state = state.copyWith(isModelSpeaking: false);
         unawaited(_pipeline.flushPlayback());
         _pipeline.notifyModelSpeaking(false);
       case LiveTurnComplete():
+        state = state.copyWith(isModelSpeaking: false);
         _pipeline.notifyModelSpeaking(false);
       case LiveToolCallRequested(:final callId, :final name, :final args):
         unawaited(_handleToolCall(callId, name, args));

@@ -7,6 +7,7 @@ import '../../features/auth/domain/app_user.dart';
 import '../../features/auth/presentation/sign_in_screen.dart';
 import '../../features/auth/presentation/splash_screen.dart';
 import '../../features/home/presentation/home_screen.dart';
+import '../../features/live_session/presentation/live_call_screen.dart';
 import '../../features/live_session/presentation/live_session_debug_harness_screen.dart';
 import '../../features/onboarding/presentation/onboarding_screen.dart';
 import '../../features/profile/data/profile_repository.dart';
@@ -62,6 +63,7 @@ const _splashPath = '/';
 const _signInPath = '/sign-in';
 const _onboardingPath = '/onboarding';
 const _homePath = '/home';
+const _liveCallPath = '/live-call';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final refreshNotifier = _RouterRefreshNotifier(ref);
@@ -96,6 +98,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: _signInPath, builder: (context, state) => const SignInScreen()),
       GoRoute(path: _onboardingPath, builder: (context, state) => const OnboardingScreen()),
       GoRoute(path: _homePath, builder: (context, state) => const HomeScreen()),
+      // The real M3 Live Call screen (DESIGN.md §1.3) — reachable from
+      // `HomeScreen` for a signed-in patient. Not route-guarded by role here
+      // (a caregiver has no reason to navigate to it from the UI, and the
+      // underlying session/tool-call plumbing is role-agnostic), matching
+      // how every other screen besides the splash/auth flow is guarded only
+      // by `AppSessionStatus`.
+      GoRoute(path: _liveCallPath, builder: (context, state) => const LiveCallScreen()),
       // Scratch harness for manually exercising the M2 audio pipeline
       // (mic -> Live session -> playback, barge-in, focus handling) —
       // deliberately not linked from anywhere in the real app's navigation,

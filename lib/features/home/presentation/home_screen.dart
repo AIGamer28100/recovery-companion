@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/router/app_router.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../profile/domain/user_profile.dart';
 
-/// Minimal placeholder proving the navigation shell works end to end. The
-/// real Live Call screen is separate, later work.
+/// The navigation shell's home screen. For a signed-in patient, this is
+/// where the real M3 Live Call screen is reached from — a caregiver instead
+/// only sees their status text, since the Live Call screen is patient-only.
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -40,6 +42,14 @@ class HomeScreen extends ConsumerWidget {
                       ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: 40),
+                if (profile?.role == UserRole.patient) ...[
+                  FilledButton.icon(
+                    onPressed: () => context.push('/live-call'),
+                    icon: const Icon(Icons.mic),
+                    label: const Text('Start a live call'),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 OutlinedButton(
                   onPressed: () => ref.read(authControllerProvider.notifier).signOut(),
                   child: const Text('Sign out'),
