@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Soter Recovery</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%23D69A52%22/></svg>">
+</head>
+<body>
+
+<header class="site">
+  <a class="wordmark" href="index.html">Soter Recovery</a>
+  <nav class="site">
+    <a href="index.html#download">Download</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+  </nav>
+</header>
+
+<main class="wrap legal">
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated: 26 July 2026 &mdash; drafted in good faith to
+  accurately describe the app as it exists today, pending review by a licensed
+  privacy attorney before any public launch. If you notice a mismatch between
+  this document and the app's actual behavior, please open an issue on
+  <a href="https://github.com/AIGamer28100/soter-recovery">GitHub</a>.</p>
+
+  <div class="beta-banner">
+    Soter Recovery is currently an early-access, pre-launch build. This
+    policy will be reviewed and updated before any wider release.
+  </div>
+
+  <h2>What we collect, and why</h2>
+
+  <h3>Account information</h3>
+  <p>You sign in with Google. We receive your name, email address, and
+  profile photo from Google to create your account. We never see or store
+  your Google password.</p>
+
+  <h3>Your role and profile</h3>
+  <p>You tell us whether you're a person in recovery or a caregiver. If
+  you're a person in recovery, you may add an emergency contact's name and
+  phone number, and nominate a caregiver's email address so they can support
+  you &mdash; that nomination is entirely your choice, and a caregiver has no
+  way to attach themselves to your account without it.</p>
+
+  <h3>Activity and check-ins</h3>
+  <p>When you use a grounding tool or check in on your mood, we record the
+  type of activity, your mood if you shared one, and the time. If you've
+  nominated a caregiver, they can see this activity stream.</p>
+
+  <h3>Live conversations</h3>
+  <p>When you talk to the companion, your voice is streamed live to Google's
+  Gemini API to generate a spoken response &mdash; we do not record or store
+  the audio itself. A text transcript of the conversation is saved to your
+  account so the companion can remember earlier context; this transcript is
+  visible only to you, never to a caregiver.</p>
+
+  <h3>Camera, only during a live conversation</h3>
+  <p>If you turn your camera on during a conversation, video frames are sent
+  live to Gemini so the companion can reference real things in your space.
+  Frames are not saved as a matter of course. The one exception: if the
+  companion detects you may be about to use, or that you have used, it saves
+  a single snapshot image as part of an incident record (below) &mdash; this
+  is disclosed to you immediately, out loud, every time it happens. It is
+  never silent.</p>
+
+  <h3>Incident records</h3>
+  <p>If the companion detects a possible relapse risk during a camera
+  session, it saves a record containing what it observed, a single snapshot
+  image, and the time. If your caregiver is nominated, they can see this
+  record too &mdash; you are always told when this happens, in the moment,
+  by the companion itself.</p>
+
+  <h2>Who can see your data</h2>
+  <ul>
+    <li><strong>You</strong> can always see everything in your own account.</li>
+    <li><strong>Your nominated caregiver</strong>, if you have one, can see
+    your activity stream, incident records, and alerts generated for them
+    &mdash; never your private conversation transcripts, and never your
+    account settings.</li>
+    <li><strong>Google</strong> processes your sign-in and hosts our
+    infrastructure (Firebase: authentication, database, and AI Logic, which
+    relays conversations to the Gemini API). Google does not use this data
+    to train models or for advertising, under the terms of Firebase's data
+    processing agreement.</li>
+    <li><strong>Nobody else.</strong> We don't sell data, share it with
+    advertisers, or use it for anything beyond running the app.</li>
+  </ul>
+
+  <h2>How long we keep it, stated plainly</h2>
+  <p>Being direct about where this stands today rather than promising
+  something not yet built: incident records, activity, and conversation
+  transcripts are currently retained indefinitely and cannot be deleted by
+  anyone, including you or us, once created &mdash; this is a deliberate
+  anti-tampering design so a record can't be quietly erased by either side of
+  a caregiver relationship. We know that cuts against your ability to have a
+  single moment permanently removed, and we're not pretending otherwise. An
+  automatic 180-day expiry for this data is designed and planned, but is not
+  yet active as of this writing.</p>
+
+  <h2>Deleting your account</h2>
+  <p>A full account-deletion flow with a 30-day cooling-off period is
+  designed (see the project's public design documentation) but not yet built
+  into the app's Settings screen. Until it ships, contact us directly (see
+  below) to request deletion of your account and associated data, and we
+  will process that request manually.</p>
+
+  <h2>Children's privacy</h2>
+  <p>Soter Recovery is not directed at children under 13, and we do not
+  knowingly collect data from anyone under that age. If you believe a child
+  has created an account, contact us and we'll remove it.</p>
+
+  <h2>Security</h2>
+  <p>Access to your data is enforced by Firebase security rules, not just
+  application logic &mdash; your data is scoped to your own account and
+  anyone you've explicitly nominated, at the database level. No Gemini API
+  key or other secret is ever present in the app itself.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If this policy changes in a way that matters to how your data is
+  handled, we'll update the date above and, once the app supports it,
+  notify you in-app.</p>
+
+  <h2>Contact</h2>
+  <p>Questions, deletion requests, or concerns:
+  <a href="https://github.com/AIGamer28100/soter-recovery/issues">open an
+  issue on GitHub</a>, or reach the developer directly through the contact
+  information on that repository.</p>
+
+  <div class="crisis-banner">
+    <strong>This app is not a crisis service.</strong> If you are in
+    immediate danger, contact your local emergency number or a crisis line
+    (in the US: call or text 988) directly.
+  </div>
+</main>
+
+<footer class="site">
+  <div>
+    <a href="privacy.html">Privacy Policy</a>&middot;
+    <a href="terms.html">Terms &amp; Conditions</a>&middot;
+    <a href="https://github.com/AIGamer28100/soter-recovery">GitHub</a>
+  </div>
+</footer>
+
+</body>
+</html>
