@@ -34,9 +34,22 @@ dist-ssr
 *.sw?
 .firebase/
 
-# Flutter / Android build artifacts
-mobile/build/
-mobile/.dart_tool/
-mobile/android/.gradle/
-mobile/android/local.properties
-mobile/.flutter-plugins-dependencies
+# Flutter / Dart / Android build artifacts (moved from mobile/.gitignore
+# when the Flutter app was promoted to repo root)
+**/doc/api/
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+android/app/debug
+android/app/profile
+android/app/release
+android/.gradle/
+android/local.properties
+app.*.symbols
+app.*.map.json
+
+# Claude Code background-job worktrees (ephemeral, machine-local)
+.claude/worktrees/
