@@ -38,6 +38,21 @@ class MicCapture {
     sampleRate: 16000,
     numChannels: 1,
     echoCancel: true,
+    // Found on a real device: `record`'s own default (AudioInterruptionMode
+    // .pause) makes it silently request ITS OWN audio focus internally
+    // (record_android's AudioRecorder.requestAudioFocus(), gated on
+    // `audioInterruption != NONE`) the moment capture starts. That second,
+    // redundant focus request steals focus straight back from
+    // AudioFocusHandler's own audio_session-managed request (DESIGN.md
+    // §3.7) a fraction of a second after it's acquired -- Android reports
+    // this to AudioFocusHandler as an ordinary interruption (as if a phone
+    // call had taken over), which starts the §3.7 grace-window countdown
+    // and silently ends the call ~30-60s later. Confirmed by matching
+    // logcat timestamps: focus lost at call-start, endCall() firing exactly
+    // ~49s afterward. `none` here means record no longer manages audio
+    // focus/interruption behavior at all -- AudioFocusHandler is the single
+    // owner of that job, as designed.
+    audioInterruption: AudioInterruptionMode.none,
     androidConfig: AndroidRecordConfig(
       audioSource: AndroidAudioSource.voiceCommunication,
       audioManagerMode: AudioManagerMode.modeInCommunication,
