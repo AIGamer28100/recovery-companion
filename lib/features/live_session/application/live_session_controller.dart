@@ -186,6 +186,7 @@ class LiveSessionController extends Notifier<LiveSessionState> {
         // that arrive before pose tracking has actually been started
         // (`_startCamera`'s brief window) are just silently dropped.
         onCameraImage: (image) => _poseTracker?.processFrame(image),
+        onCameraLost: _onCameraLost,
       );
   ThermalStatusChannel get _thermal => _thermalStatusChannel ??= ThermalStatusChannel();
   PoseTracker get _pose => _poseTracker ??= PoseTracker(onMotionEvent: _onPoseMotionEvent);
@@ -385,7 +386,7 @@ class LiveSessionController extends Notifier<LiveSessionState> {
     }
   }
 
-  Future<void> _stopCamera({required bool thermal}) async {
+  Future<void> _stopCamera({required bool thermal, bool lost = false}) async {
     if (!state.cameraOn) return;
     await _thermalSub?.cancel();
     _thermalSub = null;
@@ -399,8 +400,16 @@ class LiveSessionController extends Notifier<LiveSessionState> {
     } catch (_) {
       // best-effort
     }
-    state = state.copyWith(cameraOn: false, cameraDegradedByThermal: thermal);
-    final note = thermal ? cameraThermalDegradeDirectorNote() : cameraOffDirectorNote(_cameraAvailability);
+    state = state.copyWith(
+      cameraOn: false,
+      cameraDegradedByThermal: thermal,
+      cameraErrorMessage: lost ? 'Your camera stopped unexpectedly, but the conversation is still going.' : null,
+    );
+    final note = thermal
+        ? cameraThermalDegradeDirectorNote()
+        : lost
+            ? cameraLostDirectorNote()
+            : cameraOffDirectorNote(_cameraAvailability);
     unawaited(_handle?.sendTextRealtime(note));
   }
 
@@ -411,6 +420,17 @@ class LiveSessionController extends Notifier<LiveSessionState> {
   void _onThermalStatusChanged(ThermalStatus status) {
     if (status.isSevereOrAbove && state.cameraOn) {
       unawaited(_stopCamera(thermal: true));
+    }
+  }
+
+  /// Reacts to `LiveCameraStream.onCameraLost` -- found on a real device:
+  /// the OS/another app reclaiming camera priority can silently kill the
+  /// feed while our own state still believes the camera is on. Mirrors the
+  /// thermal-guardrail's graceful-degrade pattern (§4.3) rather than leaving
+  /// the UI showing a dead camera indefinitely.
+  void _onCameraLost(String reason) {
+    if (state.cameraOn) {
+      unawaited(_stopCamera(thermal: false, lost: true));
     }
   }
 

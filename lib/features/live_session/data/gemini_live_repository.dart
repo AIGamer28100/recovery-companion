@@ -351,6 +351,25 @@ class LiveSessionHandle {
     };
   }
 
+  /// Strips raw special/control-token artifacts (e.g. "`<ctrl46>`", repeated
+  /// several times in a row) found leaking into a real transcript on a real
+  /// device. These are almost certainly a raw tokenizer/model artifact from
+  /// the Live API itself, not something this app's own code produces --
+  /// there is no equivalent lever in the SDK to ask the model not to emit
+  /// them (see the note on speechConfig elsewhere in this file for the
+  /// same class of "can't fix the source, only the symptom" limitation).
+  /// Filtered here, at the source, rather than only in the UI, because a
+  /// saved transcript is also fed back to the model itself as a future
+  /// session's continuity briefing (`SessionMemoryRepository`) -- letting
+  /// this leak into that would mean a future session's own director note
+  /// hands the model back a copy of the exact glitch to imitate.
+  static final _controlTokenPattern = RegExp(r'<ctrl\d+>');
+
+  static String? _sanitizeTranscript(String? text) {
+    if (text == null) return null;
+    return text.replaceAll(_controlTokenPattern, '').trim();
+  }
+
   static List<LiveCallEvent> _mapServerContent(LiveServerContent content) {
     final events = <LiveCallEvent>[];
 
@@ -358,11 +377,11 @@ class LiveSessionHandle {
       events.add(const LiveInterrupted());
     }
 
-    final inputText = content.inputTranscription?.text;
+    final inputText = _sanitizeTranscript(content.inputTranscription?.text);
     if (inputText != null && inputText.isNotEmpty) {
       events.add(LiveTranscriptFragment(text: inputText, fromUser: true));
     }
-    final outputText = content.outputTranscription?.text;
+    final outputText = _sanitizeTranscript(content.outputTranscription?.text);
     if (outputText != null && outputText.isNotEmpty) {
       events.add(LiveTranscriptFragment(text: outputText, fromUser: false));
     }

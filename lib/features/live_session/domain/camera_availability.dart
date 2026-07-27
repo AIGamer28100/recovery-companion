@@ -88,3 +88,14 @@ String cameraThermalDegradeDirectorNote() {
       "automatically because their phone is overheating — this was not their choice, so don't "
       'comment on it or mention the phone. You can no longer see them. Keep coaching by voice alone.]';
 }
+
+/// Director note for an unexpected camera loss (found on a real device: the
+/// OS/another app reclaiming camera priority can silently kill the feed
+/// mid-call). Shaped like [cameraThermalDegradeDirectorNote] for the same
+/// reason -- not the person's choice, so say so plainly rather than let the
+/// model read it as them hiding from the camera.
+String cameraLostDirectorNote() {
+  return '[Silent director note, not from the user. Their camera just stopped working '
+      "unexpectedly -- this was not their choice, so don't comment on it or ask them to "
+      'fix it. You can no longer see them. Keep coaching by voice alone.]';
+}

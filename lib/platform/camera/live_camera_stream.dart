@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart' as cam;
+import 'package:camera_platform_interface/camera_platform_interface.dart' as cam_platform;
 import 'package:flutter/widgets.dart';
 import 'package:image/image.dart' as img;
 
@@ -70,7 +71,7 @@ const _diffH = 24;
 /// pipeline (`startImageStream`/`stopImageStream` has real latency/overhead
 /// on Android).
 class LiveCameraStream {
-  LiveCameraStream({required this.onFrame, this.onCameraImage});
+  LiveCameraStream({required this.onFrame, this.onCameraImage, this.onCameraLost});
 
   /// Called with a JPEG-encoded frame whenever motion-gating decides one is
   /// due (moved enough since the last one sent, or the keyframe interval
@@ -88,11 +89,25 @@ class LiveCameraStream {
   /// tracking isn't active.
   final void Function(cam.CameraImage image)? onCameraImage;
 
+  /// Fired when the OS/CameraX itself closes or errors out the camera
+  /// out from under us -- found on a real device: another app or system
+  /// component claiming camera priority ("Camera access priorities have
+  /// changed" / "CameraUnavailable" in logcat) can silently kill the feed
+  /// while our own state still believes the camera is on, with nothing
+  /// visibly wrong and no way to recover. Subscribed via
+  /// `CameraPlatform.instance.onCameraError`/`onCameraClosing` right after
+  /// `initialize()` -- `CameraController` itself only captures its OWN
+  /// first error internally (for `value.hasError`) and nothing calls that,
+  /// so this needs its own explicit listener.
+  final void Function(String reason)? onCameraLost;
+
   cam.CameraController? _controller;
   Timer? _tick;
   cam.CameraImage? _latestImage;
   List<int>? _prevThumb;
   DateTime? _lastKeyframeAt;
+  StreamSubscription<cam_platform.CameraErrorEvent>? _errorSub;
+  StreamSubscription<cam_platform.CameraClosingEvent>? _closingSub;
 
   /// Exposes the live controller for a `CameraPreview` widget. Null until
   /// [start] resolves.
@@ -141,6 +156,12 @@ class LiveCameraStream {
     _controller = controller;
     _prevThumb = null;
     _lastKeyframeAt = null;
+    _errorSub = cam_platform.CameraPlatform.instance.onCameraError(controller.cameraId).listen((event) {
+      onCameraLost?.call(event.description);
+    });
+    _closingSub = cam_platform.CameraPlatform.instance.onCameraClosing(controller.cameraId).listen((_) {
+      onCameraLost?.call('Camera closed by the system.');
+    });
     await controller.startImageStream((image) {
       _latestImage = image;
       onCameraImage?.call(image);
@@ -151,6 +172,10 @@ class LiveCameraStream {
   Future<void> stop() async {
     _tick?.cancel();
     _tick = null;
+    await _errorSub?.cancel();
+    _errorSub = null;
+    await _closingSub?.cancel();
+    _closingSub = null;
     _latestImage = null;
     _prevThumb = null;
     _lastKeyframeAt = null;
