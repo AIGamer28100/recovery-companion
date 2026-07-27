@@ -3,11 +3,9 @@
 /// person continued despite the model's intervention, which is the caregiver
 /// notification trigger.
 ///
-/// NOTE: this milestone (M2, the audio pipeline) only needs the *shape* of
-/// this tool call to exist so the session can receive it and reply — the
-/// actual Firestore incident-writing and caregiver-alert side effects are
-/// explicitly out of scope here (a separate task owns `flagRelapseRisk`'s
-/// real implementation, matching `src/lib/incidents.ts`/`src/lib/events.ts`).
+/// The real Firestore incident-writing and caregiver-alert side effects for
+/// this tool call live in `../data/incident_repository.dart`, matching
+/// `src/lib/incidents.ts`/`src/lib/events.ts`.
 enum RelapseStage {
   intervening,
   escalated;
@@ -36,3 +34,38 @@ class RelapseRiskArgs {
     );
   }
 }
+
+/// The outcome of actually handling a `flagRelapseRisk` call — whatever ran
+/// (the real Firestore-writing default, or an injected test double) reports
+/// back what genuinely happened, so the tool response sent to the model
+/// reflects reality rather than an assumption. This is the structural fix
+/// for the bug where `LiveSessionController` used to report
+/// `caregiverNotified: true` purely because `stage == escalated`, even when
+/// no callback — and therefore no real write — ever ran.
+class FlagRelapseRiskResult {
+  const FlagRelapseRiskResult({required this.caregiverNotified});
+
+  /// True only if a caregiver alert document was actually written.
+  final bool caregiverNotified;
+}
+
+/// Pure shaping of the success response sent back to the model for a
+/// `flagRelapseRisk` call, extracted from
+/// `LiveSessionController._handleToolCall` so it's testable without a live
+/// session/Firestore stack. Mirrors the shape `useLiveSession.ts` returns:
+/// `{ ok: true, stage, caregiverNotified }`.
+Map<String, Object?> buildFlagRelapseRiskResponse({
+  required RelapseStage stage,
+  required bool caregiverNotified,
+}) {
+  return {
+    'ok': true,
+    'stage': stage.name,
+    'caregiverNotified': caregiverNotified,
+  };
+}
+
+/// The response sent when handling the call failed (or, for any other tool
+/// name, since `flagRelapseRisk` is the only tool this app declares) — never
+/// claims a side effect happened.
+const Map<String, Object?> flagRelapseRiskFailureResponse = {'ok': false};

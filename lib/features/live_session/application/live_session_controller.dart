@@ -1,23 +1,30 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:camera/camera.dart' show CameraController;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../platform/audio/audio_pipeline.dart';
+import '../../../platform/camera/camera_availability_probe.dart';
+import '../../../platform/camera/live_camera_stream.dart';
+import '../../../platform/camera/thermal_status_channel.dart';
 import '../../auth/data/auth_repository.dart';
 import '../data/gemini_live_repository.dart';
+import '../data/incident_repository.dart';
 import '../data/session_memory_repository.dart';
+import '../domain/camera_availability.dart';
 import '../domain/live_call_event.dart';
 import '../domain/live_session_status.dart';
 import '../domain/relapse_stage.dart';
 
-/// Called when the model invokes `flagRelapseRisk`. This milestone (M2, the
-/// audio pipeline) only guarantees the tool-call plumbing exists — the
-/// actual Firestore incident write + caregiver alert
-/// (`recordRelapseIncident`/`logCaregiverAlert` in `src/lib/incidents.ts` and
-/// `src/lib/events.ts`) is TODO for a later task, which wires a real
-/// implementation of this callback in from the presentation layer.
-typedef FlagRelapseRiskCallback = Future<void> Function(RelapseRiskArgs args);
+/// Called when the model invokes `flagRelapseRisk`. Defaults to a real
+/// Firestore-writing implementation (`LiveSessionController._defaultFlagRelapseRisk`)
+/// — this is only injectable so tests can substitute a fake without touching
+/// Firebase; production never passes anything else. The returned
+/// [FlagRelapseRiskResult] is what actually happened, not an assumption
+/// derived from `stage` — see that result type's doc comment for the bug
+/// this closes.
+typedef FlagRelapseRiskCallback = Future<FlagRelapseRiskResult> Function(RelapseRiskArgs args);
 
 const _unset = Object();
 
@@ -29,6 +36,9 @@ class LiveSessionState {
     this.echoCancellationAvailability = EchoCancellationAvailability.unknown,
     this.errorMessage,
     this.isModelSpeaking = false,
+    this.cameraOn = false,
+    this.cameraDegradedByThermal = false,
+    this.cameraErrorMessage,
   });
 
   final LiveSessionStatus status;
@@ -45,6 +55,22 @@ class LiveSessionState {
   /// same-frame with the audio cut, not just audibly present.
   final bool isModelSpeaking;
 
+  /// True while the camera is actively streaming. Never persisted — reset to
+  /// false on every `endCall`/new `LiveSessionState()`, per DESIGN.md §4.4's
+  /// "opt-in every session, never remembered" requirement.
+  final bool cameraOn;
+
+  /// True if the camera was just turned off by the thermal guardrail
+  /// (DESIGN.md §4.3) rather than a manual tap — lets the UI show a banner
+  /// explaining why, instead of silently reverting the toggle.
+  final bool cameraDegradedByThermal;
+
+  /// One-shot transient message (e.g. "camera access is blocked") for the UI
+  /// to surface as a snackbar via `ref.listen`, distinct from [errorMessage]
+  /// which drives the full error status line — a camera failure must never
+  /// end the call.
+  final String? cameraErrorMessage;
+
   LiveSessionState copyWith({
     LiveSessionStatus? status,
     List<TranscriptLine>? lines,
@@ -52,6 +78,9 @@ class LiveSessionState {
     EchoCancellationAvailability? echoCancellationAvailability,
     Object? errorMessage = _unset,
     bool? isModelSpeaking,
+    bool? cameraOn,
+    bool? cameraDegradedByThermal,
+    Object? cameraErrorMessage = _unset,
   }) {
     return LiveSessionState(
       status: status ?? this.status,
@@ -63,39 +92,61 @@ class LiveSessionState {
           echoCancellationAvailability ?? this.echoCancellationAvailability,
       errorMessage: identical(errorMessage, _unset) ? this.errorMessage : errorMessage as String?,
       isModelSpeaking: isModelSpeaking ?? this.isModelSpeaking,
+      cameraOn: cameraOn ?? this.cameraOn,
+      cameraDegradedByThermal: cameraDegradedByThermal ?? this.cameraDegradedByThermal,
+      cameraErrorMessage: identical(cameraErrorMessage, _unset)
+          ? this.cameraErrorMessage
+          : cameraErrorMessage as String?,
     );
   }
 }
 
 /// Orchestrates the whole live-session lifecycle: the audio pipeline (mic,
-/// playback, echo cancellation, focus/foreground-service) and the Gemini
-/// Live session, wiring outbound mic chunks to the session and inbound
-/// audio/barge-in/tool-call events back into the pipeline and UI state.
-/// Mirrors `useLiveSession.ts`'s role, per DESIGN.md §2.2.
+/// playback, echo cancellation, focus/foreground-service), the camera
+/// stream (motion-gated frame sending, the thermal guardrail), and the
+/// Gemini Live session — wiring outbound mic/video to the session and
+/// inbound audio/barge-in/tool-call events back into the pipeline and UI
+/// state, including the real `flagRelapseRisk` Firestore write. Mirrors
+/// `useLiveSession.ts`'s role, per DESIGN.md §2.2.
 ///
-/// Deliberately does NOT own the crisis-screen UI, camera streaming, or the
-/// real `flagRelapseRisk` Firestore write — see the class docs above and
-/// DESIGN.md's M2 scope for why.
+/// Deliberately does NOT own the crisis-screen UI itself — see
+/// `live_call_screen.dart`.
 class LiveSessionController extends Notifier<LiveSessionState> {
   LiveSessionController({
     LiveSessionRepository? repository,
     AudioPipeline? audioPipeline,
     SessionMemoryRepository? sessionMemory,
+    IncidentRepository? incidentRepository,
+    LiveCameraStream? cameraStream,
+    ThermalStatusChannel? thermalStatusChannel,
     FlagRelapseRiskCallback? onFlagRelapseRisk,
   })  : _repository = repository,
         _audioPipeline = audioPipeline,
         _sessionMemory = sessionMemory,
+        _incidentRepository = incidentRepository,
+        _cameraStream = cameraStream,
+        _thermalStatusChannel = thermalStatusChannel,
         _onFlagRelapseRisk = onFlagRelapseRisk;
 
   LiveSessionRepository? _repository;
   AudioPipeline? _audioPipeline;
   SessionMemoryRepository? _sessionMemory;
+  IncidentRepository? _incidentRepository;
+  LiveCameraStream? _cameraStream;
+  ThermalStatusChannel? _thermalStatusChannel;
   final FlagRelapseRiskCallback? _onFlagRelapseRisk;
 
   LiveSessionHandle? _handle;
   StreamSubscription<LiveCallEvent>? _eventsSub;
   StreamSubscription<Uint8List>? _outboundSub;
   StreamSubscription<AudioPipelineEvent>? _pipelineEventsSub;
+  StreamSubscription<ThermalStatus>? _thermalSub;
+
+  /// Whatever the last camera-availability probe returned — used to word the
+  /// director notes sent on toggle correctly for this device. Re-probed at
+  /// call start and on each toggle, mirroring `useLiveSession.ts` re-probing
+  /// at call time "rather than trusting mount-time state".
+  CameraAvailability _cameraAvailability = CameraAvailability.unsupported;
 
   /// Bumped on every `endCall`/dispose so a session opened during teardown
   /// can't resurrect itself — mirrors `callGenerationRef` in
@@ -106,6 +157,23 @@ class LiveSessionController extends Notifier<LiveSessionState> {
   AudioPipeline get _pipeline => _audioPipeline ??= AudioPipeline();
   SessionMemoryRepository get _memory =>
       _sessionMemory ??= FirestoreSessionMemoryRepository();
+  IncidentRepository get _incidents => _incidentRepository ??= FirestoreIncidentRepository();
+  LiveCameraStream get _camera => _cameraStream ??= LiveCameraStream(onFrame: _onCameraFrame);
+  ThermalStatusChannel get _thermal => _thermalStatusChannel ??= ThermalStatusChannel();
+
+  /// Always non-null: falls back to [_defaultFlagRelapseRisk], the real
+  /// Firestore-writing implementation, unless a test injected its own via
+  /// the constructor. This is the fix for the bug where production wired no
+  /// callback at all and silently reported success — there is no longer a
+  /// "no callback" state to fall into.
+  FlagRelapseRiskCallback get _flagRelapseRiskHandler => _onFlagRelapseRisk ?? _defaultFlagRelapseRisk;
+
+  /// The active camera controller, so the UI can build a `CameraPreview`
+  /// from it — null unless `state.cameraOn` is true. This is the one place
+  /// outside `platform/camera/` that names a `camera` package type, and only
+  /// for that type signature; all camera control/streaming logic itself
+  /// stays in `LiveCameraStream`.
+  CameraController? get cameraController => _cameraStream?.controller;
 
   @override
   LiveSessionState build() {
@@ -153,14 +221,27 @@ class LiveSessionController extends Notifier<LiveSessionState> {
       // `useLiveSession.ts`'s `startCall`. Best-effort: a missing briefing
       // must never block the call from going live.
       final uid = ref.read(authRepositoryProvider).currentUser?.uid;
+      String? briefing;
       if (uid != null) {
         try {
-          final briefing = await _memory.buildContinuityBriefing(uid);
-          if (!isStale()) unawaited(handle.sendTextRealtime(briefing));
+          briefing = await _memory.buildContinuityBriefing(uid);
         } catch (_) {
           // Proceed without a briefing rather than fail the call.
         }
       }
+
+      // Re-probed at call time rather than trusting any earlier state — the
+      // person may have changed the OS permission since the app last asked.
+      // Mirrors `useLiveSession.ts` calling `detectCameraAvailability()`
+      // fresh in `startCall`, right before sending the `[Camera: ...]` note.
+      try {
+        _cameraAvailability = await detectCameraAvailability();
+      } catch (_) {
+        _cameraAvailability = CameraAvailability.unsupported;
+      }
+      final cameraNote = '[Camera: ${describeCameraForModel(_cameraAvailability, false)}]';
+      final combinedNote = briefing == null || briefing.isEmpty ? cameraNote : '$briefing\n\n$cameraNote';
+      if (!isStale()) unawaited(handle.sendTextRealtime(combinedNote));
 
       state = state.copyWith(status: LiveSessionStatus.live);
     } catch (_) {
@@ -208,6 +289,13 @@ class LiveSessionController extends Notifier<LiveSessionState> {
     _outboundSub = null;
     await _pipelineEventsSub?.cancel();
     _pipelineEventsSub = null;
+    await _thermalSub?.cancel();
+    _thermalSub = null;
+    try {
+      await _cameraStream?.stop();
+    } catch (_) {
+      // already torn down
+    }
     final handle = _handle;
     _handle = null;
     try {
@@ -220,6 +308,96 @@ class LiveSessionController extends Notifier<LiveSessionState> {
     } catch (_) {
       // already torn down
     }
+  }
+
+  /// Turns the camera on if it's off, or off if it's on — the only entry
+  /// point the UI calls. A no-op unless the call is actually live, since
+  /// there is no session to send director notes over otherwise.
+  Future<void> toggleCamera() async {
+    if (state.status != LiveSessionStatus.live) return;
+    if (state.cameraOn) {
+      await _stopCamera(thermal: false);
+    } else {
+      await _startCamera();
+    }
+  }
+
+  Future<void> _startCamera() async {
+    final handle = _handle;
+    if (handle == null) return;
+    try {
+      _cameraAvailability = await detectCameraAvailability();
+      await _camera.start();
+      state = state.copyWith(cameraOn: true, cameraDegradedByThermal: false, cameraErrorMessage: null);
+      // Only listen for thermal changes while the camera is actually
+      // running — mic+network alone isn't the load profile DESIGN.md §4.3
+      // is guarding against.
+      _thermalSub ??= _thermal.statusChanges.listen(_onThermalStatusChanged);
+      unawaited(handle.sendTextRealtime(cameraOnDirectorNote(_cameraAvailability)));
+    } catch (_) {
+      state = state.copyWith(
+        cameraErrorMessage: 'Camera access is blocked, but the conversation is still going.',
+      );
+    }
+  }
+
+  Future<void> _stopCamera({required bool thermal}) async {
+    if (!state.cameraOn) return;
+    await _thermalSub?.cancel();
+    _thermalSub = null;
+    try {
+      await _camera.stop();
+    } catch (_) {
+      // best-effort
+    }
+    state = state.copyWith(cameraOn: false, cameraDegradedByThermal: thermal);
+    final note = thermal ? cameraThermalDegradeDirectorNote() : cameraOffDirectorNote(_cameraAvailability);
+    unawaited(_handle?.sendTextRealtime(note));
+  }
+
+  /// DESIGN.md §4.3: on `THERMAL_STATUS_SEVERE` or above, proactively
+  /// degrade to audio-only rather than let the OS throttle or kill the app
+  /// unpredictably — mirrors the manual camera-off path, just triggered by
+  /// the phone instead of a tap.
+  void _onThermalStatusChanged(ThermalStatus status) {
+    if (status.isSevereOrAbove && state.cameraOn) {
+      unawaited(_stopCamera(thermal: true));
+    }
+  }
+
+  void _onCameraFrame(Uint8List jpeg) {
+    unawaited(_handle?.sendVideoRealtime(jpeg));
+  }
+
+  /// The real `flagRelapseRisk` side effect: writes the incident (with an
+  /// evidence snapshot if the camera happens to be on), and — only at
+  /// `stage == escalated` — the caregiver alert. Mirrors the
+  /// `recordRelapseIncident`/`logCaregiverAlert` sequence in
+  /// `useLiveSession.ts`'s tool-call handler exactly, including that a
+  /// failure partway through (e.g. the alert write fails after the incident
+  /// write succeeded) surfaces as an overall failure to the model — the web
+  /// has the same partial-write characteristic, not a gap introduced here.
+  Future<FlagRelapseRiskResult> _defaultFlagRelapseRisk(RelapseRiskArgs args) async {
+    final uid = ref.read(authRepositoryProvider).currentUser?.uid;
+    if (uid == null) {
+      throw StateError('No signed-in user to record a relapse-risk incident for.');
+    }
+    final evidence = state.cameraOn ? _camera.captureEvidenceFrame() : null;
+    await _incidents.recordRelapseIncident(
+      uid: uid,
+      stage: args.stage,
+      observation: args.observation,
+      evidenceJpeg: evidence,
+    );
+    if (args.stage != RelapseStage.escalated) {
+      return const FlagRelapseRiskResult(caregiverNotified: false);
+    }
+    await _incidents.logCaregiverAlert(
+      uid: uid,
+      script: buildRelapseAlertScript(args.observation),
+      triggeredBy: 'relapse_risk',
+    );
+    return const FlagRelapseRiskResult(caregiverNotified: true);
   }
 
   void _onLiveCallEvent(LiveCallEvent event) {
@@ -265,24 +443,23 @@ class LiveSessionController extends Notifier<LiveSessionState> {
 
   Future<void> _handleToolCall(String? callId, String name, Map<String, Object?> args) async {
     if (name != 'flagRelapseRisk') {
-      await _handle?.sendToolResponse(name: name, id: callId, response: {'ok': false});
+      await _handle?.sendToolResponse(name: name, id: callId, response: flagRelapseRiskFailureResponse);
       return;
     }
     final parsed = RelapseRiskArgs.fromToolArgs(args);
     try {
-      await _onFlagRelapseRisk?.call(parsed);
+      // Always a real handler (see `_flagRelapseRiskHandler`'s doc comment)
+      // — `caregiverNotified` below reflects what this call actually did,
+      // never an assumption inferred from `stage` alone.
+      final result = await _flagRelapseRiskHandler(parsed);
       state = state.copyWith(incidentStage: parsed.stage);
       await _handle?.sendToolResponse(
         name: name,
         id: callId,
-        response: {
-          'ok': true,
-          'stage': parsed.stage.name,
-          'caregiverNotified': parsed.stage == RelapseStage.escalated,
-        },
+        response: buildFlagRelapseRiskResponse(stage: parsed.stage, caregiverNotified: result.caregiverNotified),
       );
     } catch (_) {
-      await _handle?.sendToolResponse(name: name, id: callId, response: {'ok': false});
+      await _handle?.sendToolResponse(name: name, id: callId, response: flagRelapseRiskFailureResponse);
     }
   }
 

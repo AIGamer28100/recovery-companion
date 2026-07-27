@@ -203,6 +203,14 @@ class LiveSessionHandle {
   /// (continuity briefings, camera-state notes).
   Future<void> sendTextRealtime(String text) => _session.sendTextRealtime(text);
 
+  /// Streams one JPEG camera frame — mirrors `session.sendVideoRealtime` in
+  /// `videoStream.ts`. Sending is independent of the session's single
+  /// `receive()` consumer (driven by `_tee` above), so this is safe to call
+  /// alongside inbound audio/tool-call handling.
+  Future<void> sendVideoRealtime(Uint8List jpeg) {
+    return _session.sendVideoRealtime(InlineDataPart('image/jpeg', jpeg));
+  }
+
   Future<void> sendToolResponse({
     required String name,
     String? id,

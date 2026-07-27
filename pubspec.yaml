@@ -50,6 +50,10 @@ dependencies:
   firebase_crashlytics: ^5.2.6
   flutter_gemma: ^0.16.5
   flutter_tts: ^4.2.5
+  # NV21 -> RGB -> JPEG conversion for motion-gated camera frame streaming
+  # and the flagRelapseRisk evidence snapshot (DESIGN.md §4). Confined to
+  # lib/platform/camera/live_camera_stream.dart.
+  image: ^4.5.4
 
 dev_dependencies:
   flutter_test:

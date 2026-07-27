@@ -1,19 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/router/app_router.dart';
+import '../../../platform/camera/live_camera_stream.dart';
 import '../../profile/domain/user_profile.dart';
 import '../application/live_session_controller.dart';
 import '../domain/live_session_status.dart';
+import '../domain/relapse_stage.dart';
 import 'breathing_orb.dart';
 
-/// The real, polished Live Call screen — voice-only for this milestone (M3).
-/// Wires the M2 audio pipeline (`LiveSessionController`) to the crisis-screen
-/// UI spec in `DESIGN.md` §1.3, as amended by
-/// `UX_AND_CLINICAL_GROUNDING.md` §A.5/§A.6. Camera, the incident banner, and
-/// Settings are explicitly out of scope — see the stubs below.
+/// The real, polished Live Call screen (M3, extended with camera + the
+/// safety-tool incident banner in M4/M5). Wires the audio pipeline and
+/// camera stream (`LiveSessionController`) to the crisis-screen UI spec in
+/// `DESIGN.md` §1.3, as amended by `UX_AND_CLINICAL_GROUNDING.md` §A.5/§A.6.
 class LiveCallScreen extends ConsumerStatefulWidget {
   const LiveCallScreen({super.key});
 
@@ -43,6 +46,15 @@ class _LiveCallScreenState extends ConsumerState<LiveCallScreen> {
       if (previous?.status != LiveSessionStatus.live && next.status == LiveSessionStatus.live) {
         HapticFeedback.lightImpact();
       }
+      // A camera failure (e.g. permission blocked) must never look like the
+      // call itself broke — surfaced as a one-shot snackbar, not the full
+      // error state.
+      final cameraError = next.cameraErrorMessage;
+      if (cameraError != null && cameraError != previous?.cameraErrorMessage) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(cameraError)));
+      }
     });
 
     final isConnectingOrLive =
@@ -63,50 +75,109 @@ class _LiveCallScreenState extends ConsumerState<LiveCallScreen> {
       },
       child: Scaffold(
         backgroundColor: theme.colorScheme.surface,
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              children: [
-                const SizedBox(height: 8),
-                _TopBar(
-                  isLive: state.status == LiveSessionStatus.live,
-                  captionsOn: _captionsOn,
-                  onToggleCaptions: () => setState(() => _captionsOn = !_captionsOn),
-                ),
-                const SizedBox(height: 4),
-                Text('Soter Recovery', style: theme.textTheme.headlineSmall),
-                const SizedBox(height: 12),
-                _StateLine(state: state),
-                Expanded(
-                  child: Center(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: state.status == LiveSessionStatus.idle ? controller.startCall : null,
-                      child: BreathingOrb(
-                        phase: _phaseFor(state),
-                        reducedMotion: reducedMotion,
-                      ),
+        body: Stack(
+          children: [
+            // Camera preview fills the screen when on, mirrored like a
+            // selfie view (DESIGN.md §1.3) — sits behind everything else.
+            if (state.cameraOn && controller.cameraController != null)
+              Positioned.fill(
+                child: Transform.flip(
+                  flipX: true,
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    child: SizedBox(
+                      width: controller.cameraController!.value.previewSize?.height ?? 1,
+                      height: controller.cameraController!.value.previewSize?.width ?? 1,
+                      child: LiveCameraPreview(controller: controller.cameraController!),
                     ),
                   ),
                 ),
-                if (_captionsOn && state.status == LiveSessionStatus.live)
-                  _CaptionLines(lines: state.lines, style: theme.textTheme.bodyMedium),
-                const SizedBox(height: 16),
-                _HelpNowPill(contact: profile?.emergencyContact),
-                const SizedBox(height: 12),
-                _ControlRow(
-                  status: state.status,
-                  onStart: controller.startCall,
-                  onEndCall: () async {
-                    final shouldEnd = await _confirmEndCall(context);
-                    if (shouldEnd == true) await controller.endCall();
-                  },
+              ),
+            // Scrim keeps text/controls legible over a live camera feed.
+            if (state.cameraOn)
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        theme.colorScheme.surface.withValues(alpha: 0.55),
+                        theme.colorScheme.surface.withValues(alpha: 0.15),
+                        theme.colorScheme.surface.withValues(alpha: 0.75),
+                      ],
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 16),
-              ],
+              ),
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 8),
+                    _TopBar(
+                      isLive: state.status == LiveSessionStatus.live,
+                      cameraOn: state.cameraOn,
+                      reducedMotion: reducedMotion,
+                      captionsOn: _captionsOn,
+                      onToggleCaptions: () => setState(() => _captionsOn = !_captionsOn),
+                    ),
+                    const SizedBox(height: 4),
+                    Text('Soter Recovery', style: theme.textTheme.headlineSmall),
+                    const SizedBox(height: 12),
+                    _StateLine(state: state),
+                    Expanded(
+                      child: Center(
+                        child: AnimatedOpacity(
+                          // The orb fades out entirely rather than floating
+                          // over the person's own camera view (DESIGN.md
+                          // §1.3, ported from `ReactiveOrb`'s `cameraOn`
+                          // collapse) — never just dimmed, since a
+                          // half-visible orb over a small screen's frame
+                          // still covers real content.
+                          opacity: state.cameraOn ? 0.0 : 1.0,
+                          duration: const Duration(milliseconds: 700),
+                          child: IgnorePointer(
+                            ignoring: state.cameraOn,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: state.status == LiveSessionStatus.idle ? controller.startCall : null,
+                              child: BreathingOrb(
+                                phase: _phaseFor(state),
+                                reducedMotion: reducedMotion,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_captionsOn && state.status == LiveSessionStatus.live)
+                      _CaptionLines(lines: state.lines, style: theme.textTheme.bodyMedium),
+                    if (state.incidentStage != null)
+                      _IncidentBanner(
+                        stage: state.incidentStage!,
+                        onDismiss: controller.dismissIncident,
+                      ),
+                    const SizedBox(height: 16),
+                    _HelpNowPill(contact: profile?.emergencyContact),
+                    const SizedBox(height: 12),
+                    _ControlRow(
+                      status: state.status,
+                      cameraOn: state.cameraOn,
+                      onStart: controller.startCall,
+                      onToggleCamera: controller.toggleCamera,
+                      onEndCall: () async {
+                        final shouldEnd = await _confirmEndCall(context);
+                        if (shouldEnd == true) await controller.endCall();
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -137,12 +208,21 @@ class _LiveCallScreenState extends ConsumerState<LiveCallScreen> {
   }
 }
 
-/// Menu (Settings stub) top-left, captions toggle, and the "●LIVE" indicator
-/// top-right — matches the wireframe row in DESIGN.md §1.3.
+/// Menu (Settings stub) top-left, captions toggle, the "●LIVE" indicator,
+/// and — while the camera streams — the recording affordance, top-right.
+/// Matches the wireframe row in DESIGN.md §1.3.
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.isLive, required this.captionsOn, required this.onToggleCaptions});
+  const _TopBar({
+    required this.isLive,
+    required this.cameraOn,
+    required this.reducedMotion,
+    required this.captionsOn,
+    required this.onToggleCaptions,
+  });
 
   final bool isLive;
+  final bool cameraOn;
+  final bool reducedMotion;
   final bool captionsOn;
   final VoidCallback onToggleCaptions;
 
@@ -171,6 +251,14 @@ class _TopBar extends StatelessWidget {
             icon: Icon(captionsOn ? Icons.subtitles : Icons.subtitles_off_outlined),
           ),
           const Spacer(),
+          // A live-recording affordance stays visible for the entire time
+          // the camera streams (DESIGN.md §4.3/§4.4) — non-negotiable given
+          // the privacy surface, and doubles as the in-app answer to "is
+          // this actually still recording".
+          if (cameraOn) ...[
+            _CameraRecordingIndicator(reducedMotion: reducedMotion),
+            const SizedBox(width: 12),
+          ],
           if (isLive)
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -198,6 +286,64 @@ class _TopBar extends StatelessWidget {
   }
 }
 
+/// Small pulsing red dot + "camera on" label — the second, in-app layer of
+/// recording disclosure beyond the OS's own camera-in-use indicator
+/// (DESIGN.md §4.4). Reduced-motion users get a static dot instead of a
+/// pulse; the disclosure itself is never optional.
+class _CameraRecordingIndicator extends StatefulWidget {
+  const _CameraRecordingIndicator({required this.reducedMotion});
+
+  final bool reducedMotion;
+
+  @override
+  State<_CameraRecordingIndicator> createState() => _CameraRecordingIndicatorState();
+}
+
+class _CameraRecordingIndicatorState extends State<_CameraRecordingIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+    if (!widget.reducedMotion) _pulse.repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    const red = Colors.red;
+    final dot = Container(
+      width: 8,
+      height: 8,
+      decoration: const BoxDecoration(color: red, shape: BoxShape.circle),
+    );
+    return Semantics(
+      label: 'Camera on. Recording indicator.',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          widget.reducedMotion
+              ? dot
+              : FadeTransition(
+                  opacity: Tween<double>(begin: 0.35, end: 1.0).animate(_pulse),
+                  child: dot,
+                ),
+          const SizedBox(width: 6),
+          Text('camera on', style: theme.textTheme.labelSmall?.copyWith(color: red)),
+        ],
+      ),
+    );
+  }
+}
+
 /// The current-state line — always plain language, never a spinner-only
 /// state (DESIGN.md §1.3), with the connecting copy pinned to concrete,
 /// non-cheerful, non-clinical wording per §A.5.2.
@@ -211,7 +357,8 @@ class _StateLine extends StatelessWidget {
     final text = switch (state.status) {
       LiveSessionStatus.idle => 'Tap to start talking. No typing, no forms — just talk.',
       LiveSessionStatus.connecting => 'Connecting…',
-      LiveSessionStatus.live => "I'm listening. Cut in any time.",
+      LiveSessionStatus.live =>
+        state.cameraOn ? "I'm listening and watching. Cut in any time." : "I'm listening. Cut in any time.",
       LiveSessionStatus.error => state.errorMessage ?? 'Something went wrong.',
     };
     return Padding(
@@ -258,6 +405,111 @@ class _CaptionLines extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Slides up from above the control pill on a `flagRelapseRisk` disclosure —
+/// exactly where the web puts it (`LiveApp.tsx`'s incident block), same copy.
+/// **Difference from web** (DESIGN.md §1.3): on `stage == escalated` this is
+/// non-dismissible for 5 seconds and paired with a single medium-strength
+/// haptic pulse, so the person actually registers "my caregiver was told"
+/// rather than reflexively tapping it away. On `stage == intervening` it
+/// behaves like the web: dismissible immediately, no haptic.
+class _IncidentBanner extends StatefulWidget {
+  const _IncidentBanner({required this.stage, required this.onDismiss});
+
+  final RelapseStage stage;
+  final VoidCallback onDismiss;
+
+  @override
+  State<_IncidentBanner> createState() => _IncidentBannerState();
+}
+
+class _IncidentBannerState extends State<_IncidentBanner> {
+  bool _canDismiss = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _arm();
+  }
+
+  @override
+  void didUpdateWidget(covariant _IncidentBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.stage != widget.stage) _arm();
+  }
+
+  void _arm() {
+    _timer?.cancel();
+    if (widget.stage == RelapseStage.escalated) {
+      _canDismiss = false;
+      // A state change the user must not miss even if they're not looking
+      // at the screen (DESIGN.md §1.4) — a single pulse, not a startle buzz.
+      HapticFeedback.mediumImpact();
+      _timer = Timer(const Duration(seconds: 5), () {
+        if (mounted) setState(() => _canDismiss = true);
+      });
+    } else {
+      _canDismiss = true;
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final escalated = widget.stage == RelapseStage.escalated;
+    final onColor = escalated ? theme.colorScheme.onErrorContainer : theme.colorScheme.onSecondaryContainer;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: escalated ? theme.colorScheme.errorContainer : theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Semantics(
+        liveRegion: true,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: RichText(
+                text: TextSpan(
+                  style: theme.textTheme.bodyMedium?.copyWith(color: onColor),
+                  children: [
+                    TextSpan(
+                      text: escalated
+                          ? 'A note was saved for your caregiver to see next time they open their dashboard. '
+                          : 'Snapshot saved to your record. ',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    TextSpan(
+                      text: escalated
+                          ? 'A snapshot was saved to your record too.'
+                          : 'Nobody else has been contacted.',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_canDismiss)
+              TextButton(
+                onPressed: widget.onDismiss,
+                style: TextButton.styleFrom(foregroundColor: onColor),
+                child: const Text('Dismiss'),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -340,14 +592,22 @@ class _HelpNowPill extends StatelessWidget {
   }
 }
 
-/// The control pill: camera toggle (stub, M4), end call (72dp, red, center —
+/// The control pill: camera toggle (56dp), end call (72dp, red, center —
 /// hardest to hit by accident, easiest on purpose), overflow (stub). Mirrors
 /// DESIGN.md §1.3's layout exactly.
 class _ControlRow extends StatelessWidget {
-  const _ControlRow({required this.status, required this.onStart, required this.onEndCall});
+  const _ControlRow({
+    required this.status,
+    required this.cameraOn,
+    required this.onStart,
+    required this.onToggleCamera,
+    required this.onEndCall,
+  });
 
   final LiveSessionStatus status;
+  final bool cameraOn;
   final VoidCallback onStart;
+  final Future<void> Function() onToggleCamera;
   final Future<void> Function() onEndCall;
 
   @override
@@ -376,16 +636,15 @@ class _ControlRow extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Camera is M4 — visually present, disabled, no-op.
-          Tooltip(
-            message: 'Coming soon',
-            child: SizedBox(
-              width: 56,
-              height: 56,
-              child: IconButton(
-                onPressed: null,
-                icon: const Icon(Icons.videocam_outlined),
-              ),
+          // Camera is opt-in every session, never remembered (DESIGN.md
+          // §4.4) — this toggle is the only way it ever turns on.
+          SizedBox(
+            width: 56,
+            height: 56,
+            child: IconButton(
+              onPressed: status == LiveSessionStatus.live ? () => onToggleCamera() : null,
+              tooltip: cameraOn ? 'Turn camera off' : 'Turn camera on',
+              icon: Icon(cameraOn ? Icons.videocam : Icons.videocam_outlined),
             ),
           ),
           SizedBox(

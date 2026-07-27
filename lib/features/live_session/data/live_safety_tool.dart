@@ -1,11 +1,10 @@
 import 'package:firebase_ai/firebase_ai.dart';
 
-/// Dart port of `RELAPSE_RISK_TOOL` in `src/lib/safetyTools.ts`. Only the
-/// tool *declaration* and call-plumbing are in scope for this milestone —
-/// the actual Firestore incident-writing side effect (`recordRelapseIncident`
-/// / `logCaregiverAlert` in the web app) is explicitly out of scope; see
-/// `LiveSessionController.onFlagRelapseRisk` for the TODO-marked callback
-/// the UI layer wires up later.
+/// Dart port of `RELAPSE_RISK_TOOL` in `src/lib/safetyTools.ts`. This file
+/// owns only the tool *declaration* — the real Firestore incident-writing
+/// side effect (`recordRelapseIncident`/`logCaregiverAlert` in the web app)
+/// lives in `../data/incident_repository.dart` and is wired in by
+/// `LiveSessionController._defaultFlagRelapseRisk`.
 Tool buildRelapseRiskTool() {
   return Tool.functionDeclarations([
     FunctionDeclaration(

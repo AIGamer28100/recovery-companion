@@ -10,6 +10,15 @@
          notification the foreground service depends on. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- Camera integration (DESIGN.md §4). Opt-in per session, never
+         persisted as a preference (§4.4) — this permission only makes the
+         OS prompt possible, it is not auto-granted or remembered. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- Not required — the crisis flow must keep working voice-only on a
+         device with no camera at all. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <uses-feature android:name="android.hardware.camera.front" android:required="false"/>
+
     <application
         android:label="Soter Recovery"
         android:name="${applicationName}"
