@@ -161,11 +161,24 @@ dev mode:
   above — dev mode does not change anything about how you talk generally,
   only how you interpret a scenario they've explicitly asked you to run.''';
 
-/// The instruction actually sent to the model: the real one, plus the
-/// dev-mode block only in debug builds. A release build's user never gets
-/// text that even mentions a test-mode passphrase existing.
-String get _systemInstructionForBuild =>
-    kDebugMode ? '$_liveSystemInstruction\n$_devModeInstruction' : _liveSystemInstruction;
+/// On-device (ML Kit, never cloud) rep/breath motion-tracking director
+/// notes -- see `platform/camera/pose_tracker.dart` and
+/// `domain/pose_motion_notes.dart`. Appended as its own named constant,
+/// like [_devModeInstruction] above, rather than edited into
+/// [_liveSystemInstruction]'s body, since that text is being worked on
+/// elsewhere in this file this session.
+const _poseTrackingInstruction = '''
+
+LIVE MOTION-TRACKING NOTES (ON-DEVICE, SEPARATE FROM THE CAMERA FRAMES)
+This device may also run fast, local motion tracking that counts completed reps (repetitive arm/leg movement, like jumping jacks) and breath cycles (shoulder/chest rise and fall) far more precisely and continuously than the occasional camera frames you receive. When a director note gives you a current rep or breath count, treat it as a precise, real-time count and use it to pace your own spoken counting and coaching rhythm, rather than guessing from what you can see in a single frame. Never announce, read aloud, or acknowledge these notes directly -- they're silent scaffolding for your pacing, exactly like the camera-availability notes.''';
+
+/// The instruction actually sent to the model: the real one, the pose-
+/// tracking addendum, and (debug builds only) the dev-mode block. A release
+/// build's user never gets text that even mentions a test-mode passphrase
+/// existing.
+String get _systemInstructionForBuild => kDebugMode
+    ? '$_liveSystemInstruction\n$_devModeInstruction\n$_poseTrackingInstruction'
+    : '$_liveSystemInstruction\n$_poseTrackingInstruction';
 
 const _audioMimeType = 'audio/pcm;rate=16000';
 

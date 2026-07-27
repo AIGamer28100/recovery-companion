@@ -52,6 +52,11 @@ dependencies:
   # and the flagRelapseRisk evidence snapshot (DESIGN.md §4). Confined to
   # lib/platform/camera/live_camera_stream.dart.
   image: ^4.5.4
+  # On-device (never sent to any cloud model) rep/breath motion counting
+  # from the same NV21 camera stream `live_camera_stream.dart` already
+  # reads -- confined to lib/platform/camera/pose_tracker.dart.
+  google_mlkit_pose_detection: ^0.15.0
+  google_mlkit_commons: ^0.12.0
 
 dev_dependencies:
   flutter_test:

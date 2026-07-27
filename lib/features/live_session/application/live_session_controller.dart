@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../platform/audio/audio_pipeline.dart';
 import '../../../platform/camera/camera_availability_probe.dart';
 import '../../../platform/camera/live_camera_stream.dart';
+import '../../../platform/camera/pose_motion_counter.dart';
+import '../../../platform/camera/pose_tracker.dart';
 import '../../../platform/camera/thermal_status_channel.dart';
 import '../../auth/data/auth_repository.dart';
 import '../data/gemini_live_repository.dart';
@@ -15,6 +17,7 @@ import '../data/session_memory_repository.dart';
 import '../domain/camera_availability.dart';
 import '../domain/live_call_event.dart';
 import '../domain/live_session_status.dart';
+import '../domain/pose_motion_notes.dart';
 import '../domain/relapse_stage.dart';
 
 /// Called when the model invokes `flagRelapseRisk`. Defaults to a real
@@ -119,6 +122,7 @@ class LiveSessionController extends Notifier<LiveSessionState> {
     IncidentRepository? incidentRepository,
     LiveCameraStream? cameraStream,
     ThermalStatusChannel? thermalStatusChannel,
+    PoseTracker? poseTracker,
     FlagRelapseRiskCallback? onFlagRelapseRisk,
   })  : _repository = repository,
         _audioPipeline = audioPipeline,
@@ -126,6 +130,7 @@ class LiveSessionController extends Notifier<LiveSessionState> {
         _incidentRepository = incidentRepository,
         _cameraStream = cameraStream,
         _thermalStatusChannel = thermalStatusChannel,
+        _poseTracker = poseTracker,
         _onFlagRelapseRisk = onFlagRelapseRisk;
 
   LiveSessionRepository? _repository;
@@ -134,6 +139,7 @@ class LiveSessionController extends Notifier<LiveSessionState> {
   IncidentRepository? _incidentRepository;
   LiveCameraStream? _cameraStream;
   ThermalStatusChannel? _thermalStatusChannel;
+  PoseTracker? _poseTracker;
   final FlagRelapseRiskCallback? _onFlagRelapseRisk;
 
   LiveSessionHandle? _handle;
@@ -148,6 +154,18 @@ class LiveSessionController extends Notifier<LiveSessionState> {
   /// at call time "rather than trusting mount-time state".
   CameraAvailability _cameraAvailability = CameraAvailability.unsupported;
 
+  /// Throttled state for turning `PoseTracker`'s rep/breath events into
+  /// director notes -- at most one note every [_poseNoteMinGap], and only
+  /// when the totals have actually changed since the last one sent. Reset
+  /// whenever the camera (and pose tracking with it) starts, so counts
+  /// never bleed across camera-on/off toggles within a call.
+  static const _poseNoteMinGap = Duration(seconds: 2);
+  int _latestReps = 0;
+  int _latestBreaths = 0;
+  int _lastSentReps = 0;
+  int _lastSentBreaths = 0;
+  DateTime? _lastPoseNoteAt;
+
   /// Bumped on every `endCall`/dispose so a session opened during teardown
   /// can't resurrect itself — mirrors `callGenerationRef` in
   /// `useLiveSession.ts`.
@@ -158,8 +176,19 @@ class LiveSessionController extends Notifier<LiveSessionState> {
   SessionMemoryRepository get _memory =>
       _sessionMemory ??= FirestoreSessionMemoryRepository();
   IncidentRepository get _incidents => _incidentRepository ??= FirestoreIncidentRepository();
-  LiveCameraStream get _camera => _cameraStream ??= LiveCameraStream(onFrame: _onCameraFrame);
+  LiveCameraStream get _camera => _cameraStream ??= LiveCameraStream(
+        onFrame: _onCameraFrame,
+        // Feeds every raw frame from the same single image stream to pose
+        // tracking, alongside (not instead of) the motion-gated Gemini
+        // frame path above -- see `LiveCameraStream.onCameraImage`'s doc
+        // comment for why this isn't a second `startImageStream` call.
+        // Reads the field directly rather than the `_pose` getter so frames
+        // that arrive before pose tracking has actually been started
+        // (`_startCamera`'s brief window) are just silently dropped.
+        onCameraImage: (image) => _poseTracker?.processFrame(image),
+      );
   ThermalStatusChannel get _thermal => _thermalStatusChannel ??= ThermalStatusChannel();
+  PoseTracker get _pose => _poseTracker ??= PoseTracker(onMotionEvent: _onPoseMotionEvent);
 
   /// Always non-null: falls back to [_defaultFlagRelapseRisk], the real
   /// Firestore-writing implementation, unless a test injected its own via
@@ -292,6 +321,11 @@ class LiveSessionController extends Notifier<LiveSessionState> {
     await _thermalSub?.cancel();
     _thermalSub = null;
     try {
+      await _poseTracker?.stop();
+    } catch (_) {
+      // already torn down
+    }
+    try {
       await _cameraStream?.stop();
     } catch (_) {
       // already torn down
@@ -334,6 +368,16 @@ class LiveSessionController extends Notifier<LiveSessionState> {
       // is guarding against.
       _thermalSub ??= _thermal.statusChanges.listen(_onThermalStatusChanged);
       unawaited(handle.sendTextRealtime(cameraOnDirectorNote(_cameraAvailability)));
+      // Pose tracking rides the same camera-on/off lifecycle as the camera
+      // itself — never a separate always-on feature. Reset the throttled
+      // note state so a fresh camera-on session starts its rep/breath
+      // counts from zero rather than carrying over a previous segment's.
+      _latestReps = 0;
+      _latestBreaths = 0;
+      _lastSentReps = 0;
+      _lastSentBreaths = 0;
+      _lastPoseNoteAt = null;
+      _pose.start(sensorOrientationDegrees: _cameraStream?.controller?.description.sensorOrientation ?? 0);
     } catch (_) {
       state = state.copyWith(
         cameraErrorMessage: 'Camera access is blocked, but the conversation is still going.',
@@ -345,6 +389,11 @@ class LiveSessionController extends Notifier<LiveSessionState> {
     if (!state.cameraOn) return;
     await _thermalSub?.cancel();
     _thermalSub = null;
+    try {
+      await _poseTracker?.stop();
+    } catch (_) {
+      // best-effort
+    }
     try {
       await _camera.stop();
     } catch (_) {
@@ -367,6 +416,34 @@ class LiveSessionController extends Notifier<LiveSessionState> {
 
   void _onCameraFrame(Uint8List jpeg) {
     unawaited(_handle?.sendVideoRealtime(jpeg));
+  }
+
+  /// Records the latest rep/breath totals from `PoseTracker` and, if the
+  /// throttle window has elapsed, sends an updated director note. Totals
+  /// (not deltas) mean a note skipped by the throttle is never lost
+  /// information — the next note sent, whenever that is, carries whatever
+  /// is current at that point.
+  void _onPoseMotionEvent(PoseMotionEvent event) {
+    switch (event.kind) {
+      case PoseMotionKind.rep:
+        _latestReps = event.totalCount;
+      case PoseMotionKind.breath:
+        _latestBreaths = event.totalCount;
+    }
+    _maybeSendPoseNote();
+  }
+
+  void _maybeSendPoseNote() {
+    final handle = _handle;
+    if (handle == null) return;
+    if (_latestReps == _lastSentReps && _latestBreaths == _lastSentBreaths) return;
+    final now = DateTime.now();
+    final last = _lastPoseNoteAt;
+    if (last != null && now.difference(last) < _poseNoteMinGap) return;
+    _lastPoseNoteAt = now;
+    _lastSentReps = _latestReps;
+    _lastSentBreaths = _latestBreaths;
+    unawaited(handle.sendTextRealtime(poseMotionDirectorNote(reps: _latestReps, breaths: _latestBreaths)));
   }
 
   /// The real `flagRelapseRisk` side effect: writes the incident (with an

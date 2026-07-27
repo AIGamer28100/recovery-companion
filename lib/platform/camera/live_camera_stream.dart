@@ -70,12 +70,23 @@ const _diffH = 24;
 /// pipeline (`startImageStream`/`stopImageStream` has real latency/overhead
 /// on Android).
 class LiveCameraStream {
-  LiveCameraStream({required this.onFrame});
+  LiveCameraStream({required this.onFrame, this.onCameraImage});
 
   /// Called with a JPEG-encoded frame whenever motion-gating decides one is
   /// due (moved enough since the last one sent, or the keyframe interval
   /// elapsed).
   final void Function(Uint8List jpeg) onFrame;
+
+  /// Called with EVERY raw frame from the single `startImageStream`
+  /// callback below -- not motion-gated, unlike [onFrame]. Added so
+  /// on-device pose tracking (`PoseTracker`, wired from
+  /// `LiveSessionController`) can run continuously off the exact same
+  /// image stream instead of starting a second `startImageStream` consumer,
+  /// which Android does not support cleanly alongside this one (see this
+  /// class's own doc comment on why the stream is started once and left
+  /// running). Optional and null by default -- a no-op cost when pose
+  /// tracking isn't active.
+  final void Function(cam.CameraImage image)? onCameraImage;
 
   cam.CameraController? _controller;
   Timer? _tick;
@@ -130,7 +141,10 @@ class LiveCameraStream {
     _controller = controller;
     _prevThumb = null;
     _lastKeyframeAt = null;
-    await controller.startImageStream((image) => _latestImage = image);
+    await controller.startImageStream((image) {
+      _latestImage = image;
+      onCameraImage?.call(image);
+    });
     _tick = Timer.periodic(cameraTickInterval, (_) => _onTick());
   }
 
