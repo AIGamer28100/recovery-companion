@@ -53,3 +53,7 @@ app.*.map.json
 
 # Claude Code background-job worktrees (ephemeral, machine-local)
 .claude/worktrees/
+
+# Personal blog/LinkedIn post drafts about the event -- not part of the
+# product, never meant to be committed to this public repo.
+/blog/
