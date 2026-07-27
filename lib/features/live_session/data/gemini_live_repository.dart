@@ -194,21 +194,45 @@ class LiveSessionHandle {
   /// barge-in signals, tool calls, and the terminal close event.
   Stream<LiveCallEvent> get events => _events.stream;
 
-  Future<void> sendAudioChunk(Uint8List pcm16) {
-    return _session.sendAudioRealtime(InlineDataPart(_audioMimeType, pcm16));
+  /// All three send* methods below funnel failures through [_emitClosed]
+  /// rather than letting them propagate as unhandled exceptions. Found on a
+  /// real device: callers fire these with `unawaited(...)` (outbound audio
+  /// is a hot per-chunk path, nothing sensible to await per-chunk), so an
+  /// uncaught error here — e.g. the WebSocket closing server-side mid-call
+  /// (confirmed case: Gemini API prepayment credits depleted, closeCode
+  /// 1011) — surfaced as a repeating "Unhandled Exception" instead of the
+  /// same graceful "the line dropped" state the inbound path already gets
+  /// from the tee's `onError`. Both directions now converge on one error
+  /// path.
+  Future<void> sendAudioChunk(Uint8List pcm16) async {
+    try {
+      await _session.sendAudioRealtime(InlineDataPart(_audioMimeType, pcm16));
+    } catch (_) {
+      _emitClosed('The line dropped. Try again.');
+    }
   }
 
   /// Sends a silent director-note-style message on the side channel —
   /// mirrors `session.sendTextRealtime` usage in `useLiveSession.ts`
   /// (continuity briefings, camera-state notes).
-  Future<void> sendTextRealtime(String text) => _session.sendTextRealtime(text);
+  Future<void> sendTextRealtime(String text) async {
+    try {
+      await _session.sendTextRealtime(text);
+    } catch (_) {
+      _emitClosed('The line dropped. Try again.');
+    }
+  }
 
   /// Streams one JPEG camera frame — mirrors `session.sendVideoRealtime` in
   /// `videoStream.ts`. Sending is independent of the session's single
   /// `receive()` consumer (driven by `_tee` above), so this is safe to call
   /// alongside inbound audio/tool-call handling.
-  Future<void> sendVideoRealtime(Uint8List jpeg) {
-    return _session.sendVideoRealtime(InlineDataPart('image/jpeg', jpeg));
+  Future<void> sendVideoRealtime(Uint8List jpeg) async {
+    try {
+      await _session.sendVideoRealtime(InlineDataPart('image/jpeg', jpeg));
+    } catch (_) {
+      _emitClosed('The line dropped. Try again.');
+    }
   }
 
   Future<void> sendToolResponse({

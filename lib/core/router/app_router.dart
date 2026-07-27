@@ -88,7 +88,14 @@ final routerProvider = Provider<GoRouter>((ref) {
             case AppSessionStatus.ready:
               final onAuthScreen =
                   location == _signInPath || location == _onboardingPath || location == _splashPath;
-              return onAuthScreen ? _homePath : null;
+              if (!onAuthScreen) return null;
+              // A patient's Live Call screen IS their home -- landing on a
+              // separate screen with a single "Start a live call" button
+              // that just pushes into a second, near-identical "start
+              // talking" control was two taps for the same one action.
+              // Caregivers have no live-call feature, so they keep the
+              // plain HomeScreen.
+              return s.profile?.role == UserRole.patient ? _liveCallPath : _homePath;
           }
         },
       );

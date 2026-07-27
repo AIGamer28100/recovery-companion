@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/router/app_router.dart';
 import '../../../platform/camera/live_camera_stream.dart';
+import '../../auth/application/auth_controller.dart';
 import '../../profile/domain/user_profile.dart';
 import '../application/live_session_controller.dart';
 import '../domain/live_session_status.dart';
@@ -122,6 +123,7 @@ class _LiveCallScreenState extends ConsumerState<LiveCallScreen> {
                       reducedMotion: reducedMotion,
                       captionsOn: _captionsOn,
                       onToggleCaptions: () => setState(() => _captionsOn = !_captionsOn),
+                      onOpenMenu: () => _openMenu(context),
                     ),
                     const SizedBox(height: 4),
                     Text('Soter Recovery', style: theme.textTheme.headlineSmall),
@@ -206,6 +208,49 @@ class _LiveCallScreenState extends ConsumerState<LiveCallScreen> {
       ),
     );
   }
+
+  // A patient's Live Call screen is now their home screen (no separate
+  // HomeScreen in between), so sign-out — previously only reachable from
+  // that screen — needs a home here. A minimal bottom sheet rather than a
+  // real Settings screen, which doesn't exist yet.
+  void _openMenu(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text('Sign out'),
+              onTap: () async {
+                Navigator.of(sheetContext).pop();
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: const Text('Sign out?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(true),
+                        child: const Text('Sign out'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed == true) {
+                  await ref.read(authControllerProvider.notifier).signOut();
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Menu (Settings stub) top-left, captions toggle, the "●LIVE" indicator,
@@ -218,6 +263,7 @@ class _TopBar extends StatelessWidget {
     required this.reducedMotion,
     required this.captionsOn,
     required this.onToggleCaptions,
+    required this.onOpenMenu,
   });
 
   final bool isLive;
@@ -225,6 +271,7 @@ class _TopBar extends StatelessWidget {
   final bool reducedMotion;
   final bool captionsOn;
   final VoidCallback onToggleCaptions;
+  final VoidCallback onOpenMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -239,8 +286,8 @@ class _TopBar extends StatelessWidget {
           IconButton(
             iconSize: 24,
             constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
-            onPressed: () {},
-            tooltip: 'Menu (coming soon)',
+            onPressed: onOpenMenu,
+            tooltip: 'Menu',
             icon: const Icon(Icons.menu),
           ),
           IconButton(
