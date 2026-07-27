@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:permission_handler/permission_handler.dart';
+
 import '../foreground_service/foreground_service_channel.dart';
 import 'audio_focus_handler.dart';
 import 'energy_vad.dart';
@@ -57,16 +59,38 @@ class AudioPipeline {
     _echoCancellationAvailable = await _native.init();
     await _focus.start();
     _focusSub = _focus.signals.listen(_onFocusSignal);
+
+    // Mic capture MUST succeed (and RECORD_AUDIO must already be granted)
+    // before the foreground service starts. Android 14+ rejects
+    // startForeground(type=microphone) with a SecurityException unless the
+    // app already holds RECORD_AUDIO at that exact moment -- confirmed on a
+    // real device (Pixel 9a, targetSDK 36): the service crashed on every
+    // attempt because this used to run in the opposite order, so
+    // RECORD_AUDIO was still ungranted when startForeground() fired. If
+    // _mic.start() throws MicPermissionDenied, we never reach the
+    // foreground-service call at all -- that's the correct behavior.
+    final outbound = await _mic.start();
+    _rawVadSub = _mic.rawFragments.listen(_onRawMicFragment);
+
+    // Best-effort: POST_NOTIFICATIONS (Android 13+) governs whether the
+    // foreground service's persistent notification can actually show, but
+    // unlike RECORD_AUDIO its absence doesn't crash startForeground() -- the
+    // call still works, just without the notification. Request it, but
+    // don't block the call on the result.
+    try {
+      await Permission.notification.request();
+    } catch (_) {
+      // Non-fatal; proceed regardless.
+    }
+
     await _foregroundService.start();
     _nativeEventsSub = _native.events.listen((_) {
-      // Buffer-underrun signals are diagnostic-only for M2 — surfaced via
+      // Buffer-underrun signals are diagnostic-only for M2 -- surfaced via
       // [events] in case a caller wants to log/telemetry them, but no
       // corrective action is taken automatically (§3.6: buffer sizing needs
       // real-device validation before that would even be well-founded).
     });
 
-    final outbound = await _mic.start();
-    _rawVadSub = _mic.rawFragments.listen(_onRawMicFragment);
     await _native.play();
     return _gateOutbound(outbound);
   }

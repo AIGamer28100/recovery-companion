@@ -2,10 +2,12 @@ package app.recoverycompanion.recovery_companion.audio
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.audiofx.AcousticEchoCanceler
+import android.os.Build
 import android.util.Log
 
 /**
@@ -82,6 +84,18 @@ class PlaybackEngine(private val context: Context) {
         previousAudioMode = manager.mode
         manager.mode = AudioManager.MODE_IN_COMMUNICATION
 
+        // MODE_IN_COMMUNICATION + USAGE_VOICE_COMMUNICATION (needed above for
+        // the AEC/NS pairing in DESIGN.md §3.4) makes Android treat this like
+        // an ordinary phone call, which defaults routing to the EARPIECE --
+        // confirmed on a real device (Pixel 9a): the model's voice came out
+        // of the ear speaker, unusable for a hands-free companion someone
+        // might be doing jumping jacks in front of. Force the built-in
+        // loudspeaker explicitly; this is not optional cosmetic polish, it's
+        // the primary listening mode this app is designed around (§1.3: used
+        // one-handed or not held at all, never "held to the ear like a
+        // call").
+        routeToLoudspeaker(manager)
+
         val aecAvailable = AcousticEchoCanceler.isAvailable()
         if (aecAvailable) {
             // Bound to this AudioTrack's session mainly so the platform is
@@ -105,6 +119,23 @@ class PlaybackEngine(private val context: Context) {
         }
 
         return aecAvailable
+    }
+
+    private fun routeToLoudspeaker(manager: AudioManager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val speaker = manager.availableCommunicationDevices.firstOrNull {
+                it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+            }
+            if (speaker != null) {
+                val routed = manager.setCommunicationDevice(speaker)
+                if (routed) return
+                Log.w(TAG, "setCommunicationDevice(speaker) returned false, falling back")
+            } else {
+                Log.w(TAG, "No TYPE_BUILTIN_SPEAKER in availableCommunicationDevices, falling back")
+            }
+        }
+        @Suppress("DEPRECATION")
+        manager.isSpeakerphoneOn = true
     }
 
     fun write(pcm16: ByteArray) {
@@ -155,6 +186,14 @@ class PlaybackEngine(private val context: Context) {
         audioTrack = null
 
         audioManager?.let { manager ->
+            // Symmetric with routeToLoudspeaker() in init() -- don't leave
+            // communication-device routing pinned after the call ends.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                manager.clearCommunicationDevice()
+            } else {
+                @Suppress("DEPRECATION")
+                manager.isSpeakerphoneOn = false
+            }
             manager.mode = previousAudioMode ?: AudioManager.MODE_NORMAL
         }
         audioManager = null
