@@ -111,6 +111,18 @@ class LiveCameraStream {
     );
     try {
       await controller.initialize();
+      // Found on a real device: the sensor never refocused on its own after
+      // the initial lock -- `camera`'s CameraController doesn't set
+      // continuous autofocus by default on every device/API level, so this
+      // has to be requested explicitly. Best-effort: some front cameras
+      // (fixed-focus modules, common on budget devices) don't support
+      // FocusMode.auto at all and will throw -- that's not a real failure,
+      // it just means this device never had adjustable focus to begin with.
+      try {
+        await controller.setFocusMode(cam.FocusMode.auto);
+      } catch (_) {
+        // No adjustable focus on this camera -- nothing to fix, proceed.
+      }
     } catch (_) {
       await controller.dispose();
       rethrow;
