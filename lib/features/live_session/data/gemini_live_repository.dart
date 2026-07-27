@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:firebase_ai/firebase_ai.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 
 import '../domain/live_call_event.dart';
 import 'live_safety_tool.dart';
@@ -126,6 +127,46 @@ Be careful and be certain. Only act on what you can genuinely SEE. Water, tea, c
 SAFETY
 Never mention medication or dosages. If they seem to be in immediate danger, gently encourage them to contact emergency services or a crisis line.''';
 
+/// Debug-build-only test/demo mode: lets the team verbally trigger a
+/// scripted safety-tool scenario (e.g. holding up an ordinary cup to the
+/// camera and having it treated as a detected drink) to verify the full
+/// visual+voice+escalation pipeline end to end without needing a real
+/// substance on hand. Appended to the system instruction ONLY when
+/// `kDebugMode` is true (see `_systemInstructionFor` below) -- this text
+/// must never exist in what a real release build sends the model, so the
+/// gate is a compile-time constant, not something a passphrase alone could
+/// ever unlock in production.
+const _devModeInstruction = '''
+
+DEV MODE — DEBUG BUILD ONLY
+This build is a development/demo build, never shown to a real person in
+recovery. If someone identifies themselves and clearly asks to start a
+test or dev mode (for example: "I'm Hariharan and we're starting dev
+mode" — the exact wording doesn't matter, the intent does: a clear
+self-identification plus an explicit ask to begin testing), switch into
+dev mode:
+- Say once, plainly, that you're in dev/test mode now, so anyone reading
+  the transcript later knows this was a deliberate test, not a real event.
+- From then on, treat whatever scenario they describe as real for testing
+  purposes. If they say something like "run a scenario where drinking from
+  this glass means I'm using" and then hold up an ordinary object (a cup,
+  glass, tumbler, bottle — whatever they said would represent it), react
+  exactly as you would to a real detected use: call flagRelapseRisk and
+  escalate through the normal stages, using that object as the visual
+  anchor. This is the only situation in which you should ever treat a
+  plain drink container as something to flag.
+- Stay in dev mode until they say something like "end dev mode" / "stop
+  the test", or the call ends.
+- Outside of an active dev-mode scenario, behave exactly as instructed
+  above — dev mode does not change anything about how you talk generally,
+  only how you interpret a scenario they've explicitly asked you to run.''';
+
+/// The instruction actually sent to the model: the real one, plus the
+/// dev-mode block only in debug builds. A release build's user never gets
+/// text that even mentions a test-mode passphrase existing.
+String get _systemInstructionForBuild =>
+    kDebugMode ? '$_liveSystemInstruction\n$_devModeInstruction' : _liveSystemInstruction;
+
 const _audioMimeType = 'audio/pcm;rate=16000';
 
 class FirebaseLiveSessionRepository implements LiveSessionRepository {
@@ -139,6 +180,17 @@ class FirebaseLiveSessionRepository implements LiveSessionRepository {
       model: _liveModelId,
       liveGenerationConfig: LiveGenerationConfig(
         responseModalities: [ResponseModalities.audio],
+        // Pins the model's spoken output (and, per the SDK's own doc
+        // comment on outputAudioTranscription, that transcript's language)
+        // to English. Added after a real-device report of occasional
+        // non-English transcripts for English speech. The Live API has no
+        // equivalent lever for INPUT transcription -- its language is
+        // auto-detected from the audio and isn't independently
+        // configurable, so this is a partial, honest mitigation
+        // (constraining the session's own language, which plausibly biases
+        // its speech understanding too) rather than a guaranteed fix for
+        // input-side misdetection specifically.
+        speechConfig: SpeechConfig(languageCode: 'en-US'),
         // Surfaces both sides of the conversation as text, mirroring
         // `geminiLive.ts` — important when audio is unclear or the room is
         // loud.
@@ -151,7 +203,7 @@ class FirebaseLiveSessionRepository implements LiveSessionRepository {
           slidingWindow: SlidingWindow(targetTokens: 20000),
         ),
       ),
-      systemInstruction: Content.text(_liveSystemInstruction),
+      systemInstruction: Content.text(_systemInstructionForBuild),
       tools: [buildRelapseRiskTool()],
     );
 

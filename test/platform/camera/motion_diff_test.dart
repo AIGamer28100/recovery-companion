@@ -32,13 +32,13 @@ void main() {
     });
 
     test('false when the mean delta is below the threshold', () {
-      // mean delta = 5, threshold defaults to yPlaneMotionThreshold (6).
-      expect(hasMotion([15, 15], [10, 10]), isFalse);
+      // mean delta = 2, threshold defaults to yPlaneMotionThreshold (3).
+      expect(hasMotion([12, 12], [10, 10]), isFalse);
     });
 
     test('true when the mean delta meets the threshold exactly', () {
-      // mean delta = 6 -> >= threshold, so counts as motion.
-      expect(hasMotion([16, 16], [10, 10]), isTrue);
+      // mean delta = 3 -> >= threshold, so counts as motion.
+      expect(hasMotion([13, 13], [10, 10]), isTrue);
     });
 
     test('true when the mean delta clearly exceeds the threshold', () {

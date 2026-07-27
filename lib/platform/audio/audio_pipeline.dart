@@ -95,6 +95,18 @@ class AudioPipeline {
     return _gateOutbound(outbound);
   }
 
+  /// Safety net for the AEC-fallback mute below: reported on a real device
+  /// ("when I didn't talk for a while it stopped the mic") -- if the
+  /// `notifyModelSpeaking(false)` signal that's supposed to un-mute never
+  /// arrives cleanly for any reason (a turnComplete event that doesn't
+  /// fire, a session hiccup), the mic would otherwise stay muted for the
+  /// rest of the call with no recovery path and nothing visibly wrong to
+  /// the person -- a real problem for a crisis line. No single spoken
+  /// utterance should plausibly run this long, so this is a backstop, not
+  /// a normal code path.
+  static const _micMuteWatchdogTimeout = Duration(seconds: 12);
+  Timer? _micMuteWatchdog;
+
   /// Tells the pipeline whether the model is currently speaking, so the
   /// local VAD hint (§3.5) and the AEC-unavailable mic-mute fallback (§3.4)
   /// know when to engage. The application layer derives this from
@@ -103,8 +115,7 @@ class AudioPipeline {
     _modelSpeaking = speaking;
     _vad.reset();
     if (!speaking) {
-      _micMutedForAec = false;
-      unawaited(_native.setVolume(1.0));
+      _unmuteForAec();
     } else if (!_echoCancellationAvailable) {
       // No hardware AEC: the safe fallback is muting local capture for the
       // duration of model audio rather than risking the model hearing (and
@@ -112,7 +123,16 @@ class AudioPipeline {
       // these devices — DESIGN.md §3.4 requires this be surfaced to the UI,
       // which reads [echoCancellationAvailable].
       _micMutedForAec = true;
+      _micMuteWatchdog?.cancel();
+      _micMuteWatchdog = Timer(_micMuteWatchdogTimeout, _unmuteForAec);
     }
+  }
+
+  void _unmuteForAec() {
+    _micMuteWatchdog?.cancel();
+    _micMuteWatchdog = null;
+    _micMutedForAec = false;
+    unawaited(_native.setVolume(1.0));
   }
 
   /// The barge-in primitive: flush the native playback ring buffer and
@@ -135,6 +155,8 @@ class AudioPipeline {
   Future<void> stop() async {
     _focusGraceTimer?.cancel();
     _focusGraceTimer = null;
+    _micMuteWatchdog?.cancel();
+    _micMuteWatchdog = null;
     await _rawVadSub?.cancel();
     _rawVadSub = null;
     await _focusSub?.cancel();

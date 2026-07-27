@@ -24,7 +24,16 @@ class LiveCameraPreview extends StatelessWidget {
 /// Tick interval — widened from the web's 1000ms per DESIGN.md §4.1 ("Phone
 /// camera pipelines... cost more CPU per frame pulled than a browser's
 /// `drawImage`"), landing in the middle of the specified 1500-2000ms band.
-const cameraTickInterval = Duration(milliseconds: 1750);
+// Tightened from DESIGN.md's original 1750ms after real-device feedback:
+// paced coaching (counting breaths, jumping jacks) felt laggy against the
+// model's spoken cadence -- the model can only react to what it's been
+// sent, and 1750ms between checks is a long gap relative to a ~4s breath
+// cycle. 800ms is a middle ground between the web's original 1000ms and
+// the mobile-specific widening DESIGN.md §4.1 argued for on CPU/battery
+// grounds -- the thermal guardrail (§4.3) is the intended safety net if
+// this proves too aggressive on a real device, not a reason to avoid
+// tightening it here.
+const cameraTickInterval = Duration(milliseconds: 800);
 
 /// Matches `KEYFRAME_INTERVAL_MS` in `videoStream.ts` — DESIGN.md §4.1 calls
 /// out no reason to diverge, since it's tuned against the same

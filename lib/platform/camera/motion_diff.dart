@@ -8,15 +8,18 @@ library;
 /// Below this mean per-sample delta the scene is treated as unchanged.
 ///
 /// The web's `MOTION_THRESHOLD` (6) was tuned against an RGBA canvas
-/// red-channel sample. DESIGN.md §4.2 is explicit that this number is NOT
-/// assumed to transfer to sampling the YUV Y-plane directly (a different
-/// signal path — full luminance vs. one color channel of a decoded RGBA
-/// frame) — treat `6` here as a starting point carried over for parity, not
-/// a validated value. It needs real on-device recalibration (record actual
-/// mean deltas for "genuinely still" vs. "someone moving" scenes on a
-/// representative phone) before this is a settled constant — tracked as an
-/// M4 follow-up, not shipped as final tuning.
-const int yPlaneMotionThreshold = 6;
+/// red-channel sample; DESIGN.md §4.2 already flagged it as unvalidated for
+/// the YUV Y-plane path. Real-device feedback confirmed the risk concretely:
+/// subtle motion (a chest rising and falling during a breathing exercise)
+/// often fell below 6, so frames were only reliably sent on the 6s keyframe
+/// fallback rather than tracking the exercise live. Lowered to 3 -- still a
+/// starting point, not a fully calibrated value (that needs recorded mean
+/// deltas for genuinely-still vs. moving scenes on real hardware), but
+/// deliberately biased toward "sends too often" over "misses real motion"
+/// now that the latter has a confirmed real-world failure mode and the
+/// former's cost is just data/battery, bounded by the thermal guardrail
+/// (§4.3).
+const int yPlaneMotionThreshold = 3;
 
 /// Mean absolute delta between two equal-length sample lists (e.g. a
 /// downsampled luminance thumbnail). Returns `double.infinity` if the
