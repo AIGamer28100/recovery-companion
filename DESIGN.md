@@ -711,7 +711,23 @@ Concrete requirements:
 
 ## 4. Camera & vision
 
-### 4.1 Frame capture cadence — motion-gating still holds, tuned for mobile
+### 4.1 Frame capture cadence — motion-gating REVERTED after real-device testing
+
+**Superseded 2026-07-27.** The motion-gating design below shipped, then
+real-device testing surfaced its actual failure mode: the luminance-diff
+threshold was under-sensitive to visually subtle but meaningful motion (a
+hand lifting to take a sip of water — the same failure mode the threshold's
+own tuning comment had already documented for a breathing exercise's chest
+rise/fall). The model ended up reasoning off a frame up to 6s stale and
+narrating actions it had never actually been shown ("you just took a sip of
+water" when the user hadn't). Re-tuning the threshold again only chases the
+next subtle motion it misses, so cadence was reverted to a steady 1fps send
+every tick, unconditionally — real, current visual grounding on every frame
+instead of a threshold guessing what counts as "moved enough." `PoseTracker`/
+`PoseMotionCounter` (continuous, off the same raw camera stream, never
+gated) now carry the "more real-time local trigger" role motion-gating was
+never actually filling. `motion_diff.dart` and its test were deleted as
+dead code. The rest of this section is kept for history.
 
 `videoStream.ts`'s core idea — send a keyframe every ~6s and otherwise only
 send a frame when the scene has actually changed, measured cheaply via a

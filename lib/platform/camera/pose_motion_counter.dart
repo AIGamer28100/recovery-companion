@@ -1,11 +1,10 @@
 /// Pure landmark-motion counting math for the on-device pose-tracking
 /// feature -- reduced to plain Dart doubles/timestamps so [OscillationCounter],
 /// [repSignal]/[breathSignal], and [PoseMotionCounter] are all unit-testable
-/// without any `google_mlkit_pose_detection`/`camera` import. Mirrors how
-/// `motion_diff.dart` isolates `live_camera_stream.dart`'s YUV motion-gating
-/// math from the plugin calls themselves -- `pose_tracker.dart` is the only
-/// file that builds a [PoseSample] from a real ML Kit `Pose` and the only
-/// one importing ML Kit at all.
+/// without any `google_mlkit_pose_detection`/`camera` import -- mirrors how
+/// `live_camera_stream.dart` keeps its own YUV/JPEG plugin calls out of this
+/// layer. `pose_tracker.dart` is the only file that builds a [PoseSample]
+/// from a real ML Kit `Pose` and the only one importing ML Kit at all.
 library;
 
 /// One frame's worth of the body landmark positions the counters need,
@@ -185,9 +184,7 @@ class PoseMotionEvent {
 }
 
 /// Unvalidated starting-point tuning -- there is no way to calibrate these
-/// against a real device in this environment (see `motion_diff.dart`'s
-/// `yPlaneMotionThreshold` doc comment for the same honest caveat on a
-/// sibling threshold). Reps: a deliberate, clearly-raised arm/leg swing,
+/// against a real device in this environment. Reps: a deliberate, clearly-raised arm/leg swing,
 /// roughly a quarter of the shoulder-to-hip distance, completing in well
 /// under a slow walk's cadence but not faster than a real human can move.
 /// Breaths: a much smaller shoulder swing over a much slower window.
