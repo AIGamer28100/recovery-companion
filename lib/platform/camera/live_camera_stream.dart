@@ -6,8 +6,6 @@ import 'package:camera_platform_interface/camera_platform_interface.dart' as cam
 import 'package:flutter/widgets.dart';
 import 'package:image/image.dart' as img;
 
-import 'motion_diff.dart';
-
 /// Wraps `camera`'s `CameraPreview` so the presentation layer
 /// (`live_call_screen.dart`) never needs its own `package:camera` import
 /// just to render the live feed — the only `camera` package name it needs
@@ -22,24 +20,19 @@ class LiveCameraPreview extends StatelessWidget {
   Widget build(BuildContext context) => cam.CameraPreview(controller);
 }
 
-/// Tick interval — widened from the web's 1000ms per DESIGN.md §4.1 ("Phone
-/// camera pipelines... cost more CPU per frame pulled than a browser's
-/// `drawImage`"), landing in the middle of the specified 1500-2000ms band.
-// Tightened from DESIGN.md's original 1750ms after real-device feedback:
-// paced coaching (counting breaths, jumping jacks) felt laggy against the
-// model's spoken cadence -- the model can only react to what it's been
-// sent, and 1750ms between checks is a long gap relative to a ~4s breath
-// cycle. 800ms is a middle ground between the web's original 1000ms and
-// the mobile-specific widening DESIGN.md §4.1 argued for on CPU/battery
-// grounds -- the thermal guardrail (§4.3) is the intended safety net if
-// this proves too aggressive on a real device, not a reason to avoid
-// tightening it here.
-const cameraTickInterval = Duration(milliseconds: 800);
-
-/// Matches `KEYFRAME_INTERVAL_MS` in `videoStream.ts` — DESIGN.md §4.1 calls
-/// out no reason to diverge, since it's tuned against the same
-/// `contextWindowCompression` behavior on both apps.
-const cameraKeyframeInterval = Duration(seconds: 6);
+/// Reverted off motion-gating back to the web's original steady 1fps
+/// (DESIGN.md §4.1/§4.2 superseded — see the note there): real-device
+/// testing found the luminance-diff gate under-sensitive to genuinely
+/// meaningful but visually subtle motion (a hand lifting to take a sip of
+/// water, same failure mode already documented for breathing in the
+/// now-deleted `motion_diff.dart`), so the model was reasoning off a frame
+/// up to 6s stale and narrating actions it hadn't actually been shown. A
+/// steady 1fps send is simpler and gives real, current visual grounding
+/// every tick instead of tuning a threshold that keeps finding new subtle
+/// motions it misses. `PoseTracker`/`PoseMotionCounter` (continuous, off the
+/// same raw `onCameraImage` stream, unaffected by this) remain the
+/// real-time local trigger source layered on top.
+const cameraTickInterval = Duration(milliseconds: 1000);
 
 /// Width of the frame actually sent to the model — close to the web's 512px
 /// `FRAME_WIDTH`, even though capture already requests a low preset, since
@@ -54,22 +47,17 @@ const cameraSendJpegQuality = 55;
 const evidenceFrameWidth = 320;
 const evidenceJpegQuality = 45;
 
-/// Small luminance thumbnail used only for the motion-diff comparison —
-/// matches `DIFF_W`/`DIFF_H` in `videoStream.ts`.
-const _diffW = 32;
-const _diffH = 24;
-
-/// Owns the `camera` package's continuous image stream, motion-gated frame
-/// selection, and JPEG encoding for both the live-streamed frames and the
-/// one evidence snapshot `flagRelapseRisk` captures. The only file that
-/// imports both `camera` and `image` — everything above this layer only
-/// ever sees JPEG [Uint8List]s, never a `CameraImage`/`CameraController`.
+/// Owns the `camera` package's continuous image stream and JPEG encoding for
+/// both the live-streamed frames and the one evidence snapshot
+/// `flagRelapseRisk` captures. The only file that imports both `camera` and
+/// `image` — everything above this layer only ever sees JPEG [Uint8List]s,
+/// never a `CameraImage`/`CameraController`.
 ///
 /// Per DESIGN.md §4.1, the image stream is started once and left running
-/// continuously for as long as the camera is on; frames are discarded on
-/// ticks that don't need evaluating rather than stopping/restarting the
-/// pipeline (`startImageStream`/`stopImageStream` has real latency/overhead
-/// on Android).
+/// continuously for as long as the camera is on rather than stopping/
+/// restarting per tick (`startImageStream`/`stopImageStream` has real
+/// latency/overhead on Android) — every tick now sends what it has, since
+/// motion-gating was reverted (§4.1's superseding note).
 class LiveCameraStream {
   LiveCameraStream({required this.onFrame, this.onCameraImage, this.onCameraLost});
 
@@ -104,8 +92,6 @@ class LiveCameraStream {
   cam.CameraController? _controller;
   Timer? _tick;
   cam.CameraImage? _latestImage;
-  List<int>? _prevThumb;
-  DateTime? _lastKeyframeAt;
   StreamSubscription<cam_platform.CameraErrorEvent>? _errorSub;
   StreamSubscription<cam_platform.CameraClosingEvent>? _closingSub;
 
@@ -117,8 +103,8 @@ class LiveCameraStream {
 
   /// Starts the front camera at [cam.ResolutionPreset.low] — DESIGN.md §4.1:
   /// "asking the sensor for less data in the first place is strictly cheaper
-  /// than discarding it after capture" — with NV21 frames so motion-diff can
-  /// sample the Y-plane directly without an RGBA conversion.
+  /// than discarding it after capture" — with NV21 frames for cheap JPEG
+  /// encoding on the send path.
   Future<void> start() async {
     if (_controller != null) return;
     final cameras = await cam.availableCameras();
@@ -154,8 +140,6 @@ class LiveCameraStream {
       rethrow;
     }
     _controller = controller;
-    _prevThumb = null;
-    _lastKeyframeAt = null;
     _errorSub = cam_platform.CameraPlatform.instance.onCameraError(controller.cameraId).listen((event) {
       onCameraLost?.call(event.description);
     });
@@ -177,8 +161,6 @@ class LiveCameraStream {
     await _closingSub?.cancel();
     _closingSub = null;
     _latestImage = null;
-    _prevThumb = null;
-    _lastKeyframeAt = null;
     final controller = _controller;
     _controller = null;
     if (controller == null) return;
@@ -195,16 +177,6 @@ class LiveCameraStream {
   void _onTick() {
     final image = _latestImage;
     if (image == null) return;
-
-    final now = DateTime.now();
-    final dueForKeyframe = isDueForKeyframe(_lastKeyframeAt, now, cameraKeyframeInterval);
-    final thumb = _sampleLuminance(image, _diffW, _diffH);
-    final moved = hasMotion(thumb, _prevThumb);
-    _prevThumb = thumb;
-
-    if (!moved && !dueForKeyframe) return;
-    _lastKeyframeAt = now;
-
     final jpeg = _encodeJpeg(image, targetWidth: cameraSendFrameWidth, quality: cameraSendJpegQuality);
     if (jpeg != null) onFrame(jpeg);
   }
@@ -219,28 +191,6 @@ class LiveCameraStream {
     final image = _latestImage;
     if (image == null) return null;
     return _encodeJpeg(image, targetWidth: evidenceFrameWidth, quality: evidenceJpegQuality);
-  }
-
-  /// Samples the Y (luminance) plane directly on a coarse grid — cheaper
-  /// than the web's approach, which has to stride through an RGBA canvas
-  /// buffer to read one channel per pixel (DESIGN.md §4.1); an NV21 Y-plane
-  /// byte is already a plain luminance sample.
-  static List<int> _sampleLuminance(cam.CameraImage image, int outW, int outH) {
-    final yPlane = image.planes.first;
-    final bytes = yPlane.bytes;
-    final stride = yPlane.bytesPerRow;
-    final width = image.width;
-    final height = image.height;
-    final samples = List<int>.filled(outW * outH, 0);
-    for (var oy = 0; oy < outH; oy++) {
-      final sy = (oy * height) ~/ outH;
-      final rowOffset = sy * stride;
-      for (var ox = 0; ox < outW; ox++) {
-        final sx = (ox * width) ~/ outW;
-        samples[oy * outW + ox] = bytes[rowOffset + sx];
-      }
-    }
-    return samples;
   }
 
   static Uint8List? _encodeJpeg(cam.CameraImage image, {required int targetWidth, required int quality}) {

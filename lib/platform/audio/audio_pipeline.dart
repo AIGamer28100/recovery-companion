@@ -163,12 +163,24 @@ class AudioPipeline {
     _focusSub = null;
     await _nativeEventsSub?.cancel();
     _nativeEventsSub = null;
-    await _mic.stop();
-    await _native.pause();
-    await _native.flush();
-    await _native.release();
-    await _focus.stop();
-    await _foregroundService.stop();
+    // Found on a real device: the call-ended notification ("still on the
+    // line") kept showing after the in-app call had ended. Root cause: this
+    // teardown ran mic/native/focus release sequentially and only called
+    // `_foregroundService.stop()` at the very end -- one real-device hiccup
+    // in any earlier step (mic/native platform-channel throwing) aborted
+    // the rest of stop() and skipped it, leaving the foreground service (and
+    // its persistent notification) running indefinitely. Releasing the
+    // foreground/mic privilege matters more than a clean teardown of an
+    // already-failed step, so it now runs in `finally`, unconditionally.
+    try {
+      await _mic.stop();
+      await _native.pause();
+      await _native.flush();
+      await _native.release();
+      await _focus.stop();
+    } finally {
+      await _foregroundService.stop();
+    }
   }
 
   Future<void> dispose() async {

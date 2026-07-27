@@ -114,68 +114,90 @@ class _LiveCallScreenState extends ConsumerState<LiveCallScreen> {
             SafeArea(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Column(
-                  children: [
-                    const SizedBox(height: 8),
-                    _TopBar(
-                      isLive: state.status == LiveSessionStatus.live,
-                      cameraOn: state.cameraOn,
-                      reducedMotion: reducedMotion,
-                      captionsOn: _captionsOn,
-                      onToggleCaptions: () => setState(() => _captionsOn = !_captionsOn),
-                      onOpenMenu: () => _openMenu(context),
-                    ),
-                    const SizedBox(height: 4),
-                    Text('Soter Recovery', style: theme.textTheme.headlineSmall),
-                    const SizedBox(height: 12),
-                    _StateLine(state: state),
-                    Expanded(
-                      child: Center(
-                        child: AnimatedOpacity(
-                          // The orb fades out entirely rather than floating
-                          // over the person's own camera view (DESIGN.md
-                          // §1.3, ported from `ReactiveOrb`'s `cameraOn`
-                          // collapse) — never just dimmed, since a
-                          // half-visible orb over a small screen's frame
-                          // still covers real content.
-                          opacity: state.cameraOn ? 0.0 : 1.0,
-                          duration: const Duration(milliseconds: 700),
-                          child: IgnorePointer(
-                            ignoring: state.cameraOn,
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: state.status == LiveSessionStatus.idle ? controller.startCall : null,
-                              child: BreathingOrb(
-                                phase: _phaseFor(state),
-                                reducedMotion: reducedMotion,
+                // Found on a real device: rotating to landscape shrinks
+                // available height far more than width, and the fixed-height
+                // children below (top bar, headline, state line, captions,
+                // incident banner, help pill, control row) could already
+                // exceed that height on their own -- the single `Expanded`
+                // orb region used to be the only flex to absorb it, which
+                // just produced a hard `RenderFlex overflowed` error instead.
+                // `LayoutBuilder` + `SingleChildScrollView` lets the same
+                // content scroll on a too-short viewport rather than
+                // overflow; `Expanded` is gone since a scrollable Column
+                // can't give it the bounded height it requires, replaced
+                // with fixed spacing around the (fixed-size) orb.
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(height: 8),
+                            _TopBar(
+                              isLive: state.status == LiveSessionStatus.live,
+                              cameraOn: state.cameraOn,
+                              reducedMotion: reducedMotion,
+                              captionsOn: _captionsOn,
+                              onToggleCaptions: () => setState(() => _captionsOn = !_captionsOn),
+                              onOpenMenu: () => _openMenu(context),
+                            ),
+                            const SizedBox(height: 4),
+                            Text('Soter Recovery', style: theme.textTheme.headlineSmall),
+                            const SizedBox(height: 12),
+                            _StateLine(state: state),
+                            const SizedBox(height: 12),
+                            Center(
+                              child: AnimatedOpacity(
+                                // The orb fades out entirely rather than floating
+                                // over the person's own camera view (DESIGN.md
+                                // §1.3, ported from `ReactiveOrb`'s `cameraOn`
+                                // collapse) — never just dimmed, since a
+                                // half-visible orb over a small screen's frame
+                                // still covers real content.
+                                opacity: state.cameraOn ? 0.0 : 1.0,
+                                duration: const Duration(milliseconds: 700),
+                                child: IgnorePointer(
+                                  ignoring: state.cameraOn,
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: state.status == LiveSessionStatus.idle ? controller.startCall : null,
+                                    child: BreathingOrb(
+                                      phase: _phaseFor(state),
+                                      reducedMotion: reducedMotion,
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
+                            const SizedBox(height: 12),
+                            if (_captionsOn && state.status == LiveSessionStatus.live)
+                              _CaptionLines(lines: state.lines, style: theme.textTheme.bodyMedium),
+                            if (state.incidentStage != null)
+                              _IncidentBanner(
+                                stage: state.incidentStage!,
+                                onDismiss: controller.dismissIncident,
+                              ),
+                            const SizedBox(height: 16),
+                            _HelpNowPill(contact: profile?.emergencyContact),
+                            const SizedBox(height: 12),
+                            _ControlRow(
+                              status: state.status,
+                              cameraOn: state.cameraOn,
+                              onStart: controller.startCall,
+                              onToggleCamera: controller.toggleCamera,
+                              onEndCall: () async {
+                                final shouldEnd = await _confirmEndCall(context);
+                                if (shouldEnd == true) await controller.endCall();
+                              },
+                            ),
+                            const SizedBox(height: 16),
+                          ],
                         ),
                       ),
-                    ),
-                    if (_captionsOn && state.status == LiveSessionStatus.live)
-                      _CaptionLines(lines: state.lines, style: theme.textTheme.bodyMedium),
-                    if (state.incidentStage != null)
-                      _IncidentBanner(
-                        stage: state.incidentStage!,
-                        onDismiss: controller.dismissIncident,
-                      ),
-                    const SizedBox(height: 16),
-                    _HelpNowPill(contact: profile?.emergencyContact),
-                    const SizedBox(height: 12),
-                    _ControlRow(
-                      status: state.status,
-                      cameraOn: state.cameraOn,
-                      onStart: controller.startCall,
-                      onToggleCamera: controller.toggleCamera,
-                      onEndCall: () async {
-                        final shouldEnd = await _confirmEndCall(context);
-                        if (shouldEnd == true) await controller.endCall();
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                  ],
+                    );
+                  },
                 ),
               ),
             ),
