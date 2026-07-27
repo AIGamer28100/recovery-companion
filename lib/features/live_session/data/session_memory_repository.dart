@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/retention.dart';
+
 /// A faithful Dart port of `sessionMemory.ts` — the only place `cloud_firestore`
 /// is touched for the `users/{uid}/sessions` subcollection. Kept as its own
 /// single-responsibility repository (rather than folded into
@@ -45,6 +47,7 @@ class FirestoreSessionMemoryRepository implements SessionMemoryRepository {
       await _sessions(uid).add({
         'transcript': sliced,
         'createdAt': FieldValue.serverTimestamp(),
+        'expiresAt': retentionExpiresAt(),
       });
     } on FirebaseException catch (e) {
       // Mirrors the web app's `console.warn` — a lost recap must never block

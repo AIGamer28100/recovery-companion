@@ -1,5 +1,6 @@
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
 import { db } from './firebase'
+import { retentionExpiresAt } from './retention'
 import type { RelapseStage } from './safetyTools'
 
 /** Evidence frames stay small — Firestore documents are capped at 1 MB. */
@@ -34,5 +35,6 @@ export async function recordRelapseIncident(
     observation: observation.slice(0, 500),
     ...(frame ? { frame } : {}),
     createdAt: serverTimestamp(),
+    expiresAt: retentionExpiresAt(),
   })
 }

@@ -28,6 +28,9 @@ rules_version = '2';
 //   - mood: string|null, one of ['calm','anxious','irritable','low','overwhelmed'] or null (required)
 //   - script: string, <= 2000 chars (optional)
 //   - createdAt: timestamp (required, immutable, must equal request.time)
+//   - expiresAt: timestamp (required) — createdAt + 180d (+/- 5min tolerance,
+//     see isValidExpiresAt()). Drives the Firestore TTL policy (M7,
+//     DESIGN.md §5.2/§5.6.2); not itself an app-visible field.
 //
 // Collection: users/{userId}/alerts/{alertId}
 // Fields:
@@ -35,9 +38,12 @@ rules_version = '2';
 //   - triggeredBy: string, one of ['physical_tension','sensory_overload','craving_spike',
 //                  'elevated_stress','manual'] (required, immutable)
 //   - createdAt: timestamp (required, immutable, must equal request.time)
+//   - expiresAt: timestamp (required) — see events.expiresAt above.
 //
 // events/alerts/incidents/sessions are readable by the owning user, or a
-// caregiver whose email that user nominated. All are append-only.
+// caregiver whose email that user nominated. All are append-only. All four
+// also require an `expiresAt` field (createdAt + 180d) for the M7
+// general-retention TTL policy (DESIGN.md §5.2/§5.6.2).
 //
 // ===============================================================
 
@@ -73,41 +79,72 @@ service cloud.firestore {
       return request.resource.data[field] == request.time;
     }
 
+    // M7 general-retention TTL (DESIGN.md §5.2, §5.6.2): every events/alerts/
+    // incidents/sessions doc must carry `expiresAt = createdAt + 180d`, so a
+    // Firestore TTL policy on that field can sweep it without any client or
+    // Cloud Function ever needing to run.
+    //
+    // Why a +/-5 minute tolerance window instead of exact equality: the client
+    // cannot compute an exact match at write-construction time because
+    // `createdAt` is still an unresolved `serverTimestamp()` sentinel then — it
+    // only resolves to `request.time` once the write reaches the backend. The
+    // client's `expiresAt` is necessarily computed from ITS OWN clock a little
+    // earlier. This was verified empirically, not assumed: a Firestore emulator
+    // test (rules-unit-testing) comparing `expiresAt == createdAt +
+    // duration.value(180,'d')` rejected every write, including one where the
+    // client's clock was simulated as perfectly in sync with the server (0ms
+    // configured skew) — because real wall-clock time still elapses between the
+    // client capturing "now" and the server resolving `request.time`, even with
+    // zero network latency on localhost. A tolerance window is therefore not a
+    // shortcut but the only viable approach; 5 minutes is generous relative to
+    // realistic client/server clock skew and is trivial next to Firestore TTL's
+    // own documented ~24h sweep imprecision (DESIGN.md §5.6.2), so it doesn't
+    // weaken the feature's actual precision contract.
+    function isValidExpiresAt() {
+      let expected = request.resource.data.createdAt + duration.value(180, 'd');
+      return request.resource.data.expiresAt is timestamp &&
+             request.resource.data.expiresAt >= expected - duration.value(5, 'm') &&
+             request.resource.data.expiresAt <= expected + duration.value(5, 'm');
+    }
+
     function isValidEvent() {
       let allowedTypes = ['physical_tension', 'sensory_overload', 'craving_spike',
                            'elevated_stress', 'reset', 'checkin', 'live_conversation'];
       let allowedMoods = ['calm', 'anxious', 'irritable', 'low', 'overwhelmed'];
-      return hasOnlyAllowedFields(['type', 'mood', 'script', 'createdAt']) &&
-             hasRequiredFields(['type', 'mood', 'createdAt']) &&
+      return hasOnlyAllowedFields(['type', 'mood', 'script', 'createdAt', 'expiresAt']) &&
+             hasRequiredFields(['type', 'mood', 'createdAt', 'expiresAt']) &&
              request.resource.data.type is string &&
              request.resource.data.type in allowedTypes &&
              (request.resource.data.mood == null || request.resource.data.mood in allowedMoods) &&
              isValidOptionalString('script', 2000) &&
-             isRecentServerTimestamp('createdAt');
+             isRecentServerTimestamp('createdAt') &&
+             isValidExpiresAt();
     }
 
     function isValidIncident() {
-      return hasOnlyAllowedFields(['stage', 'observation', 'frame', 'createdAt']) &&
-             hasRequiredFields(['stage', 'observation', 'createdAt']) &&
+      return hasOnlyAllowedFields(['stage', 'observation', 'frame', 'createdAt', 'expiresAt']) &&
+             hasRequiredFields(['stage', 'observation', 'createdAt', 'expiresAt']) &&
              request.resource.data.stage in ['intervening', 'escalated'] &&
              request.resource.data.observation is string &&
              request.resource.data.observation.size() <= 500 &&
              // Evidence frame is a small base64 JPEG data URL; capped well under
              // the 1 MB document limit.
              isValidOptionalString('frame', 400000) &&
-             isRecentServerTimestamp('createdAt');
+             isRecentServerTimestamp('createdAt') &&
+             isValidExpiresAt();
     }
 
     function isValidAlert() {
       let allowedTriggers = ['physical_tension', 'sensory_overload', 'craving_spike',
                               'elevated_stress', 'manual', 'relapse_risk'];
-      return hasOnlyAllowedFields(['script', 'triggeredBy', 'createdAt']) &&
-             hasRequiredFields(['script', 'triggeredBy', 'createdAt']) &&
+      return hasOnlyAllowedFields(['script', 'triggeredBy', 'createdAt', 'expiresAt']) &&
+             hasRequiredFields(['script', 'triggeredBy', 'createdAt', 'expiresAt']) &&
              request.resource.data.script is string &&
              request.resource.data.script.size() <= 2000 &&
              request.resource.data.triggeredBy is string &&
              request.resource.data.triggeredBy in allowedTriggers &&
-             isRecentServerTimestamp('createdAt');
+             isRecentServerTimestamp('createdAt') &&
+             isValidExpiresAt();
     }
 
     function isValidProfileCreate() {
@@ -210,11 +247,12 @@ service cloud.firestore {
       match /sessions/{sessionId} {
         allow read: if isOwner(uid);
         allow create: if isOwner(uid) &&
-          hasOnlyAllowedFields(['transcript', 'createdAt']) &&
-          hasRequiredFields(['transcript', 'createdAt']) &&
+          hasOnlyAllowedFields(['transcript', 'createdAt', 'expiresAt']) &&
+          hasRequiredFields(['transcript', 'createdAt', 'expiresAt']) &&
           request.resource.data.transcript is string &&
           request.resource.data.transcript.size() <= 6000 &&
-          isRecentServerTimestamp('createdAt');
+          isRecentServerTimestamp('createdAt') &&
+          isValidExpiresAt();
         allow update, delete: if false;
       }
 

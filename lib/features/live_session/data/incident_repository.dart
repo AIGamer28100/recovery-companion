@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../../../core/retention.dart';
 import '../domain/relapse_stage.dart';
 
 /// The only place `cloud_firestore` is touched for the
@@ -15,13 +16,15 @@ import '../domain/relapse_stage.dart';
 ///
 /// See the field-by-field comparison against `firestore.rules` in this
 /// milestone's report; summarized here:
-///   - `isValidIncident()`: only `stage`, `observation`, `frame`, `createdAt`
-///     allowed; `stage` in `['intervening','escalated']`; `observation`
-///     string <= 500 chars; `frame` optional string <= 400000 chars;
-///     `createdAt` a recent server timestamp.
-///   - `isValidAlert()`: only `script`, `triggeredBy`, `createdAt` allowed;
-///     `script` string <= 2000 chars; `triggeredBy` in the fixed allowed-values
-///     list (includes `'relapse_risk'`); `createdAt` a recent server timestamp.
+///   - `isValidIncident()`: only `stage`, `observation`, `frame`, `createdAt`,
+///     `expiresAt` allowed; `stage` in `['intervening','escalated']`;
+///     `observation` string <= 500 chars; `frame` optional string <= 400000
+///     chars; `createdAt` a recent server timestamp; `expiresAt` within
+///     +/-5min of `createdAt + 180d` (M7 retention TTL, see `core/retention.dart`).
+///   - `isValidAlert()`: only `script`, `triggeredBy`, `createdAt`, `expiresAt`
+///     allowed; `script` string <= 2000 chars; `triggeredBy` in the fixed
+///     allowed-values list (includes `'relapse_risk'`); `createdAt` a recent
+///     server timestamp; `expiresAt` same TTL rule as above.
 abstract class IncidentRepository {
   /// Mirrors `recordRelapseIncident` in `incidents.ts`. [evidenceJpeg], when
   /// present, is embedded as a base64 JPEG data URL under the `frame` field
@@ -99,6 +102,7 @@ class FirestoreIncidentRepository implements IncidentRepository {
       'observation': truncateObservation(observation),
       if (evidenceJpeg != null) 'frame': encodeEvidenceFrame(evidenceJpeg),
       'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': retentionExpiresAt(),
     });
   }
 
@@ -114,6 +118,7 @@ class FirestoreIncidentRepository implements IncidentRepository {
       'script': truncated,
       'triggeredBy': triggeredBy,
       'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': retentionExpiresAt(),
     });
   }
 }

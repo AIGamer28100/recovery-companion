@@ -9,6 +9,7 @@ import {
   Timestamp,
 } from 'firebase/firestore'
 import { db } from './firebase'
+import { retentionExpiresAt } from './retention'
 
 export interface StoredSession {
   transcript: string
@@ -24,6 +25,7 @@ export async function saveSessionTranscript(uid: string, transcript: string): Pr
   await addDoc(collection(db, 'users', uid, 'sessions'), {
     transcript: trimmed.slice(-MAX_TRANSCRIPT_CHARS),
     createdAt: serverTimestamp(),
+    expiresAt: retentionExpiresAt(),
   })
 }
 
